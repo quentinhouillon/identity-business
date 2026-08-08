@@ -10,7 +10,7 @@ pub enum Criticality {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SecurityEvent {
-    pub id: i64,
+    pub id: String,
     pub node_id: i64,
     pub title: String,
     pub criticality: Criticality,
