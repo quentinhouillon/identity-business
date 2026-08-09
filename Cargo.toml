@@ -1,6 +1,9 @@
-[package]
-name = "core"
-version = "0.1.0"
-edition = "2024"
+[workspace]
 
-[dependencies]
+members = [
+    "crates/project_core",
+    "crates/wasm",
+    "crates/mobile",
+]
+
+resolver = "2"
