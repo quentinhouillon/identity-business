@@ -16,7 +16,8 @@ pub struct Vault {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EncryptedVault {
     pub id: String,
-    pub vault: Vec<u8>,
+    pub content: Vec<u8>,
+    pub encrypted_key: Vec<u8>,
     pub last_scan: String,
     pub creation: DateTime<Utc>,
     pub modification: DateTime<Utc>,

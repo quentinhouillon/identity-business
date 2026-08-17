@@ -2,18 +2,42 @@ use std::collections::HashMap;
 use crate::{crypto::{crypto::{decrypt_vault, encrypt_vault}}, models::{Edge, EncryptedVault, History, Node, SecurityEvent, Vault}};
 
 impl Vault {
-    pub fn new(encrypted_vault: EncryptedVault, key: [u8; 32]) -> Self {
-        let vault = decrypt_vault(&encrypted_vault, &key).unwrap();
-        Self {
+    pub fn new(
+        encrypted_vault: EncryptedVault,
+        master_password: &str,
+        user_salt: &[u8],
+    ) -> Result<Self, CryptoError> {
+
+        let vault =
+            decrypt_vault(
+                &encrypted_vault,
+                master_password.as_bytes(),
+                user_salt,
+            )?;
+
+        Ok(Self {
             nodes: vault.nodes,
             edges: vault.edges,
             history: vault.history,
-            events: vault.events
-        }
+            events: vault.events,
+        })
     }
 
-    pub fn encrypt_vault(&mut self, id: String, key: [u8; 32]) -> EncryptedVault{
-        encrypt_vault(id, self, &key).unwrap()
+    pub fn encrypt(
+        &self,
+        id: String,
+        master_password: &str,
+        user_salt: &[u8],
+        encrypted_vault: Option<&EncryptedVault>,
+    ) -> Result<EncryptedVault, CryptoError> {
+
+        encrypt_vault(
+            id,
+            self,
+            master_password.as_bytes(),
+            user_salt,
+            encrypted_vault,
+        )
     }
 
     pub fn get_nodes(&self) -> &HashMap<String, Node> {
