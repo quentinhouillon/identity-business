@@ -18,4 +18,7 @@ pub enum CryptoError {
 
     #[error("Key Derivation Failed")]
     KeyDerivationFailed,
+    
+    #[error("Key Generation Failed")]
+    KeyGenerationFailed,
 }

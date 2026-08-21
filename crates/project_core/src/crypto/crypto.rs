@@ -1,7 +1,7 @@
-use argon2::password_hash::SaltString;
 use chrono::Utc;
 use orion::aead;
 
+use crate::crypto::key::{derive_master_key, generate_vault_key};
 use crate::models::{Vault, EncryptedVault};
 use crate::crypto::crypto_error::CryptoError;
 

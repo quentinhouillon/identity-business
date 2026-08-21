@@ -7,7 +7,7 @@ use argon2::{
 
 use crate::crypto::crypto_error::CryptoError;
 
-use rand::{rngs::OsRng, RngCore};
+use rand::{rngs::SysRng, TryRng};
 
 pub fn derive_master_key(
     master_password: &[u8],
@@ -42,6 +42,8 @@ pub fn derive_master_key(
 
 pub fn generate_vault_key() -> [u8; 32] {
     let mut key = [0u8; 32];
-    OsRng.fill_bytes(&mut key);
+    SysRng
+        .try_fill_bytes(&mut key)
+        .map_err(|_| CryptoError::KeyGenerationFailed).unwrap();
     key
 }
