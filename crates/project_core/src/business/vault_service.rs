@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap};
 use crate::{crypto::{crypto::{decrypt_vault, encrypt_vault}, crypto_error::CryptoError}, models::{Edge, EncryptedVault, History, Node, SecurityEvent, Vault}};
 
 impl Vault {

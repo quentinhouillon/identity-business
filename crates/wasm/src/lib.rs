@@ -163,3 +163,8 @@ impl WasmVault {
         Ok(())
     }
 }
+
+#[wasm_bindgen]
+pub fn set_base_url(base_url: String) {
+    project_core::config::set_base_url(base_url);
+}
