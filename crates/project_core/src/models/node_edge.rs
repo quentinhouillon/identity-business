@@ -3,18 +3,22 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Node {
-    pub id: Uuid,
-    pub platform: String,
-    pub username: String,
-    pub password: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub password_expires_at: Option<DateTime<Utc>>,
+pub enum Identifier {
+    Email,
+    Phone,
+    OAuth,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct CypherNode {
+pub struct Edge {
+    pub id: Uuid,
+    pub source_id: Uuid,
+    pub target_id: Uuid,
+    pub node_type: Identifier,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CypherEdge {
     pub id: Uuid,
     pub password_expires_at: Option<DateTime<Utc>>,
     pub ciphertext: Vec<u8>,

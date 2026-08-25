@@ -12,3 +12,5 @@ serde-wasm-bindgen = "0.6"
 serde = { version = "1", features = ["derive"] }
 
 project_core = { path = "../project_core" }
+uuid = { version = "1", features = ["v4", "serde", "js"] }
+wasm-bindgen-futures = "0.4.77"

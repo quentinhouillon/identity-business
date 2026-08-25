@@ -1,24 +1,29 @@
-use std::{collections::HashMap};
-
-use chrono::{DateTime, Utc};
+use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+use super::{
+    Edge,
+    History,
+    Node,
+    SecurityEvent,
+    CypherNode,
+    CypherEdge,
+    CipherHistory,
+    CipherSecurityEvent
+};
 
-use crate::models::{Edge, History, Node, SecurityEvent};
-
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Vault {
-    pub nodes: HashMap<String, Node>,
-    pub edges: HashMap<String, Edge>,
-    pub events: HashMap<String, SecurityEvent>,
-    pub history: HashMap<String, History>,
+    pub nodes: HashMap<Uuid, Node>,
+    pub edges: HashMap<Uuid, Edge>,
+    pub history: HashMap<Uuid, History>,
+    pub events: HashMap<Uuid, SecurityEvent>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct EncryptedVault {
-    pub id: String,
-    pub content: Vec<u8>,
-    pub encrypted_key: Vec<u8>,
-    pub last_scan: String,
-    pub creation: DateTime<Utc>,
-    pub modification: DateTime<Utc>,
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct VaultResponse {
+    pub nodes: Vec<CypherNode>,
+    pub edges: Vec<CypherEdge>,
+    pub history: Vec<CipherHistory>,
+    pub events: Vec<CipherSecurityEvent>,
 }

@@ -1,4 +1,4 @@
-pub struct User{
+pub struct User {
     pub username: String,
     pub email: String,
     pub bio: String,
