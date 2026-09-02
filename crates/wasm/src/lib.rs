@@ -1,6 +1,5 @@
 use std::{
-    cell::RefCell,
-    rc::Rc,
+    cell::RefCell, collections::HashSet, rc::Rc,
 };
 
 use uuid::Uuid;
@@ -11,6 +10,7 @@ use project_core::{
     business::{
         api_service::ApiService,
         vault_service::VaultService,
+        node_edge_service::dfs
     },
     models::{
         Edge,
@@ -703,10 +703,38 @@ impl WasmVault {
 // ================================================================
 
 #[wasm_bindgen]
-pub fn set_base_url(
-    base_url: String,
-) {
-    project_core::config::set_base_url(
-        base_url
-    );
+pub fn set_base_url(base_url: String) {
+    project_core::config::set_base_url(base_url);
+}
+
+#[wasm_bindgen]
+pub fn dfs_wasm(edges_json: &str, start_id: &str) -> Result<JsValue, JsValue> {
+    let edges: Vec<Edge> = serde_json::from_str(edges_json)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let start_id = Uuid::parse_str(start_id)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let mut visited = HashSet::new();
+
+    dfs(&edges, &start_id, &mut visited);
+
+    Ok(serde_wasm_bindgen::to_value(&visited)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?)
+}
+
+#[wasm_bindgen]
+pub fn spof_wasm(edges_json: &str) -> Result<JsValue, JsValue> {
+    let edges: Vec<Edge> = serde_json::from_str(edges_json)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let spofs = spof(&edges);
+
+    let result: Vec<String> = spofs
+        .into_iter()
+        .map(|id| id.to_string())
+        .collect();
+
+    serde_wasm_bindgen::to_value(&result)
+        .map_err(|e| JsValue::from_str(&e.to_string()))
 }
