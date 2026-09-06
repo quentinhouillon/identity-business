@@ -8,11 +8,8 @@ use wasm_bindgen_futures::{future_to_promise, js_sys};
 
 use project_core::{
     business::{
-        api_service::ApiService,
-        vault_service::VaultService,
-        node_edge_service::dfs
-    },
-    models::{
+        api_service::ApiService, node_edge_service::{dfs, spof}, vault_service::VaultService
+    }, models::{
         Edge,
         Node,
     },
@@ -724,11 +721,14 @@ pub fn dfs_wasm(edges_json: &str, start_id: &str) -> Result<JsValue, JsValue> {
 }
 
 #[wasm_bindgen]
-pub fn spof_wasm(edges_json: &str) -> Result<JsValue, JsValue> {
+pub fn spof_wasm(edges_json: &str, start_id: &str) -> Result<JsValue, JsValue> {
     let edges: Vec<Edge> = serde_json::from_str(edges_json)
         .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-    let spofs = spof(&edges);
+    let start_id = Uuid::parse_str(start_id)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+    let spofs = spof(&edges, &[start_id]);
 
     let result: Vec<String> = spofs
         .into_iter()
