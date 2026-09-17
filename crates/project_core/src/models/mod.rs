@@ -6,9 +6,9 @@ pub mod vault;
 pub mod user;
 
 
-pub use node::{Node, CypherNode};
+pub use node::{Node, CipherNode};
 pub use node_edge::{Edge, CypherEdge, Identifier};
 pub use security_event::{SecurityEvent, CipherSecurityEvent};
 pub use history::{History, CipherHistory, HistoryAction};
-pub use vault::{Vault, VaultResponse};
+pub use vault::{Vault, VaultMember, VaultMemberRole};
 pub use user::User;

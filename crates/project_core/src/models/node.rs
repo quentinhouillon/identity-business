@@ -14,7 +14,7 @@ pub struct Node {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct CypherNode {
+pub struct CipherNode {
     pub id: Uuid,
     pub password_expires_at: Option<DateTime<Utc>>,
     pub ciphertext: Vec<u8>,

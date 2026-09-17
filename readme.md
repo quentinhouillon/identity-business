@@ -1,587 +1,261 @@
-# Rust WASM
+# WASM API
 
-Ce projet contient le core Rust compilé en WebAssembly afin d'être utilisé depuis une application TypeScript / React.
+This package exposes Rust functionality to JavaScript/TypeScript through WebAssembly.
 
-Les deux projets sont **indépendants** :
+It provides:
 
-- **Projet Rust** → contient le code métier et génère le WASM.
-- **Projet React / TypeScript** → consomme le package WASM généré.
-
-Le WASM fait le lien entre le frontend et le backend :
-
-```text
-React / TypeScript
-        ↓
-      WASM
-        ↓
-   Rust Core
-        ↓
-    API Backend
-```
-
-Le backend ne reçoit et ne renvoie que des **données chiffrées**. Le chiffrement et le déchiffrement sont réalisés côté Rust.
+* Graph operations
+* Encryption and decryption
+* Master key derivation
+* Vault key generation
 
 ---
 
-## Prérequis
+## Graph
 
-Installer Rust :
+### `dfs_wasm`
 
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-Installer la cible WASM :
-
-```bash
-rustup target add wasm32-unknown-unknown
-```
-
-Installer `wasm-pack` :
-
-```bash
-cargo install wasm-pack
-```
-
----
-
-## Compiler le WASM
-
-Depuis la racine du projet Rust :
-
-```bash
-wasm-pack build crates/wasm --target web
-```
-
-Le package généré se trouve dans :
-
-```text
-crates/wasm/pkg/
-```
-
-Il contient notamment :
-
-```text
-pkg/
-├── wasm.js
-├── wasm_bg.wasm
-├── wasm.d.ts
-└── package.json
-```
-
-> Le dossier `pkg` est généré automatiquement. Il ne faut pas modifier son contenu manuellement.
-
----
-
-## Utilisation dans React / TypeScript
-
-Les projets Rust et React étant indépendants, il faut **récupérer le dossier `pkg` généré par le projet Rust dans le projet React**.
-
-Par exemple :
-
-```text
-react-project/
-├── src/
-├── public/
-├── package.json
-└── wasm/
-    └── pkg/
-        ├── wasm.js
-        ├── wasm_bg.wasm
-        ├── wasm.d.ts
-        └── package.json
-```
-
-Le dossier `pkg` peut être copié directement depuis le projet Rust vers le projet React.
-
----
-
-## Initialiser le WASM
-
-Avec une compilation `--target web`, le module WASM doit être initialisé avant d'utiliser `WasmVault` :
+Runs a depth-first search on a graph.
 
 ```typescript
-import init, {
-    WasmVault,
-    set_base_url
-} from "./wasm/pkg/wasm";
-
-await init();
-```
-
----
-
-## Configurer l'API Backend
-
-L'URL du backend doit être configurée avant de créer le Vault :
-
-```typescript
-set_base_url("https://api.example.com");
-```
-
-Cette URL est utilisée par `ApiService` côté Rust pour communiquer avec le backend.
-
----
-
-# WasmVault
-
-## Créer un Vault
-
-La création du Vault est **asynchrone**.
-
-```typescript
-const vault = await new WasmVault(
-    userId,
-    masterPassword,
-    userSalt,
-    token
+const visited = dfs_wasm(
+    JSON.stringify(edges),
+    startId
 );
 ```
 
-### Paramètres
+**Parameters:**
 
-| Paramètre | Type | Description |
-|---|---|---|
-| `userId` | `string` | UUID de l'utilisateur |
-| `masterPassword` | `string` | Mot de passe maître |
-| `userSalt` | `Uint8Array` | Salt utilisateur |
-| `token` | `string \| undefined` | Token d'authentification |
+* `edges`: JSON string containing the graph edges
+* `startId`: UUID of the starting node
 
-Exemple :
+**Returns:**
 
 ```typescript
-const vault = await new WasmVault(
-    "550e8400-e29b-41d4-a716-446655440000",
-    masterPassword,
-    userSalt,
-    accessToken
-);
+Set<string>
 ```
 
-Lors de la création, Rust :
-
-1. dérive la clé maître ;
-2. contacte le backend ;
-3. récupère les données chiffrées ;
-4. déchiffre les données ;
-5. construit le `Vault` en mémoire.
+containing the visited node IDs.
 
 ---
 
-## Récupérer le Vault
+### `spof_wasm`
+
+Finds Single Points of Failure in the graph.
 
 ```typescript
-const data = vault.get_vault();
+const spofs = spof_wasm(
+    JSON.stringify(edges),
+    startId
+);
 ```
 
-Le Vault contient :
+**Parameters:**
+
+* `edges`: JSON string containing the graph edges
+* `startId`: UUID of the starting node
+
+**Returns:**
 
 ```typescript
-{
-    nodes,
-    edges,
-    history,
-    events
-}
+string[]
 ```
 
-Les données retournées sont déchiffrées et peuvent être utilisées directement par TypeScript.
+containing the SPOF node IDs.
 
 ---
 
-# Nodes
+# Cryptography
 
-## Récupérer tous les nodes
+The cryptographic API uses:
 
-```typescript
-const nodes = vault.get_nodes();
-```
+* 32-byte keys
+* 24-byte nonces
+* AEAD encryption
+* Argon2id for password-based key derivation
 
-## Récupérer un node
-
-```typescript
-const node = vault.get_node(nodeId);
-```
-
-L'ID doit être un UUID sous forme de `string`.
-
-## Ajouter un node
-
-```typescript
-await vault.post_node(
-    node,
-    token
-);
-```
-
-Rust :
-
-1. reçoit le node en clair depuis TypeScript ;
-2. chiffre le node ;
-3. l'envoie au backend ;
-4. met à jour le Vault local.
-
-## Modifier un node
-
-```typescript
-await vault.put_node(
-    node,
-    token
-);
-```
-
-Rust :
-
-1. récupère l'ancien node ;
-2. compare l'ancien et le nouveau ;
-3. génère automatiquement les entrées `History` ;
-4. chiffre le node ;
-5. envoie le node chiffré au backend ;
-6. chiffre et envoie les entrées d'historique ;
-7. met à jour le Vault local.
-
-## Supprimer un node
-
-```typescript
-await vault.delete_node(
-    nodeId,
-    token
-);
-```
-
-Rust :
-
-1. supprime le node du backend ;
-2. crée automatiquement l'entrée `History` ;
-3. chiffre l'historique ;
-4. l'envoie au backend ;
-5. supprime le node du Vault local.
+Binary data is passed between JavaScript and WASM using `Uint8Array`.
 
 ---
 
-# Edges
+## `encrypt_wasm`
 
-## Récupérer tous les edges
-
-```typescript
-const edges = vault.get_edges();
-```
-
-## Récupérer un edge
+Encrypts a JavaScript value.
 
 ```typescript
-const edge = vault.get_edge(edgeId);
-```
+const key = new Uint8Array(32);
 
-L'ID doit être un UUID sous forme de `string`.
+const nonce = crypto.getRandomValues(
+    new Uint8Array(24)
+);
 
-## Ajouter un edge
+const data = {
+    username: "alice",
+    password: "secret"
+};
 
-```typescript
-await vault.post_edge(
-    edge,
-    token
+const encrypted = encrypt_wasm(
+    key,
+    nonce,
+    data
 );
 ```
 
-## Modifier un edge
+### Parameters
+
+| Parameter | Type         | Description            |
+| --------- | ------------ | ---------------------- |
+| `key`     | `Uint8Array` | 32-byte encryption key |
+| `nonce`   | `Uint8Array` | 24-byte nonce          |
+| `value`   | `any`        | JSON-compatible value  |
+
+### Important
+
+A **new nonce must be generated for every encryption with the same key**.
+
+The nonce does not need to be secret and can be stored alongside the ciphertext.
+
+---
+
+## `decrypt_wasm`
+
+Decrypts previously encrypted data.
 
 ```typescript
-await vault.put_edge(
-    edge,
-    token
+const decrypted = decrypt_wasm(
+    key,
+    nonce,
+    encrypted
 );
 ```
 
-## Supprimer un edge
+The same `key` and `nonce` used for encryption must be provided.
+
+---
+
+# Key Management
+
+## `derive_master_key_wasm`
+
+Derives a 32-byte master key from a password and a salt using Argon2id.
 
 ```typescript
-await vault.delete_edge(
-    edgeId,
-    token
+const password = new TextEncoder().encode(
+    "my password"
+);
+
+const salt = crypto.getRandomValues(
+    new Uint8Array(16)
+);
+
+const masterKey = derive_master_key_wasm(
+    password,
+    salt
 );
 ```
 
-Les edges sont automatiquement chiffrés par Rust avant d'être envoyés au backend.
+### Parameters
 
----
+| Parameter        | Type         | Description            |
+| ---------------- | ------------ | ---------------------- |
+| `masterPassword` | `Uint8Array` | User password as bytes |
+| `salt`           | `Uint8Array` | Random salt            |
 
-# History
-
-La `history` est accessible uniquement en lecture depuis TypeScript :
-
-```typescript
-const history = vault.get_history();
-```
-
-Les entrées `History` sont générées automatiquement par Rust lors des modifications et suppressions de nodes.
-
-TypeScript ne doit pas créer ou modifier directement les entrées d'historique.
-
----
-
-# Security Events
-
-Les événements de sécurité sont accessibles uniquement en lecture :
+### Returns
 
 ```typescript
-const events = vault.get_events();
+Uint8Array
 ```
 
-Les événements sont gérés en interne par Rust.
+The returned key is always **32 bytes**.
 
-TypeScript ne doit pas créer ou modifier directement les `SecurityEvent`.
+The salt is not secret and should be stored with the encrypted data.
 
 ---
 
-# Authentification
+## `generate_vault_key_wasm`
 
-Les méthodes qui communiquent avec le backend acceptent un token :
+Generates a cryptographically secure random 32-byte key.
 
 ```typescript
-await vault.post_node(
-    node,
-    accessToken
-);
+const vaultKey = generate_vault_key_wasm();
 ```
 
-Le token est transmis au backend dans le header :
+### Returns
 
-```http
-Authorization: <token>
+```typescript
+Uint8Array
 ```
 
-Le token n'est pas stocké dans le `Vault`.
+containing 32 random bytes.
 
 ---
 
-# Chiffrement
+# Typical Vault Flow
 
-Le frontend ne chiffre pas directement les données.
-
-Lorsqu'une donnée est envoyée au backend :
+A typical vault can use the API like this:
 
 ```text
-TypeScript
-    ↓
-WasmVault
-    ↓
-Rust
-    ↓
-Chiffrement
-    ↓
-Backend
+Password
+   │
+   ▼
+Argon2id
+   │
+   ▼
+Master Key
+   │
+   ▼
+Vault Key
+   │
+   ▼
+AEAD Encryption
+   │
+   ├── Nonce (24 bytes)
+   │
+   └── Ciphertext
 ```
 
-Lorsqu'une donnée est récupérée :
-
-```text
-Backend
-    ↓
-Données chiffrées
-    ↓
-Rust
-    ↓
-Déchiffrement
-    ↓
-WasmVault
-    ↓
-TypeScript
-```
-
-Le backend ne reçoit donc jamais les données sensibles en clair.
-
-Les éléments suivants sont chiffrés avant d'être envoyés au backend :
-
-- `Node`
-- `Edge`
-- `History`
-- `SecurityEvent`
-
-Les métadonnées nécessaires au backend peuvent rester en clair selon les modèles `CypherNode` et `CypherEdge`.
-
----
-
-# Exemple complet
+Example:
 
 ```typescript
-import init, {
-    WasmVault,
-    set_base_url
-} from "./wasm/pkg/wasm";
+const password = new TextEncoder().encode(
+    "my password"
+);
 
-async function loadVault() {
-    // Initialisation du WASM
-    await init();
+const salt = crypto.getRandomValues(
+    new Uint8Array(16)
+);
 
-    // Configuration de l'API
-    set_base_url("https://api.example.com");
+const masterKey = derive_master_key_wasm(
+    password,
+    salt
+);
 
-    // Création du Vault
-    const vault = await new WasmVault(
-        userId,
-        masterPassword,
-        userSalt,
-        accessToken
-    );
+const vaultKey = generate_vault_key_wasm();
 
-    // Récupération des données
-    const nodes = vault.get_nodes();
-    const edges = vault.get_edges();
-    const history = vault.get_history();
-    const events = vault.get_events();
+const nonce = crypto.getRandomValues(
+    new Uint8Array(24)
+);
 
-    console.log(nodes);
-    console.log(edges);
-    console.log(history);
-    console.log(events);
-
-    // Ajout d'un node
-    await vault.post_node(
-        newNode,
-        accessToken
-    );
-
-    // Modification d'un node
-    await vault.put_node(
-        updatedNode,
-        accessToken
-    );
-
-    // Suppression d'un node
-    await vault.delete_node(
-        nodeId,
-        accessToken
-    );
-}
+const encrypted = encrypt_wasm(
+    vaultKey,
+    nonce,
+    {
+        username: "alice",
+        password: "secret"
+    }
+);
 ```
 
 ---
 
-# Architecture
+# Security Notes
 
-```text
-┌─────────────────────────┐
-│       Projet Rust       │
-│                         │
-│      project_core       │
-│           ↓             │
-│      VaultService       │
-│           ↓             │
-│       ApiService        │
-│           ↓             │
-│          WASM           │
-│           ↓             │
-│         pkg/            │
-└────────────┬────────────┘
-             │
-             │ copier
-             ↓
-┌─────────────────────────┐
-│     Projet React / TS   │
-│                         │
-│        wasm/pkg/        │
-│            ↓            │
-│        WasmVault        │
-│            ↓            │
-│     Application React   │
-└─────────────────────────┘
-```
-
-Le fonctionnement global est :
-
-```text
-                         ┌──────────────────┐
-                         │      React       │
-                         │   TypeScript     │
-                         └────────┬─────────┘
-                                  │
-                                  │ données
-                                  │ en clair
-                                  ↓
-                         ┌──────────────────┐
-                         │    WasmVault     │
-                         └────────┬─────────┘
-                                  │
-                                  ↓
-                         ┌──────────────────┐
-                         │      Rust        │
-                         │                  │
-                         │  VaultService    │
-                         │  ApiService      │
-                         │  Encryption      │
-                         │  Decryption      │
-                         └────────┬─────────┘
-                                  │
-                                  │ données
-                                  │ chiffrées
-                                  ↓
-                         ┌──────────────────┐
-                         │     Backend      │
-                         │                  │
-                         │  Données         │
-                         │  chiffrées       │
-                         └──────────────────┘
-```
-
-Le code métier et la logique cryptographique restent dans **Rust**.
-
-TypeScript sert principalement à utiliser le WASM et à manipuler les données déchiffrées.
-
----
-
-# Recompiler après une modification Rust
-
-Après chaque modification du code Rust :
-
-```bash
-wasm-pack build crates/wasm --target web
-```
-
-Le nouveau package est généré dans :
-
-```text
-crates/wasm/pkg/
-```
-
-Il faut ensuite remplacer le dossier `pkg` présent dans le projet React :
-
-```text
-Rust
-└── crates/
-    └── wasm/
-        └── pkg/
-             ↓
-             ↓ copier
-             ↓
-React
-└── wasm/
-    └── pkg/
-```
-
-> Le projet React n'a pas besoin du projet Rust complet. Seul le package `pkg` généré est nécessaire pour utiliser le WASM.
-
----
-
-# Résumé
-
-Le principe est de garder toute la logique sensible dans Rust :
-
-```text
-React
-  ↓
-WasmVault
-  ↓
-Rust
-  ├── Déchiffrement
-  ├── Manipulation du Vault
-  ├── Génération de l'History
-  ├── Chiffrement
-  └── Communication avec l'API
-          ↓
-       Backend
-```
-
-Le frontend travaille avec les données déchiffrées, tandis que le backend ne reçoit et ne stocke que les données chiffrées nécessaires.
-
-Le projet Rust et le projet React restent totalement indépendants. Le seul élément partagé entre les deux projets est le package `pkg` généré par `wasm-pack`.
+* Encryption keys must be **32 bytes**.
+* Nonces must be **24 bytes**.
+* Never reuse the same nonce with the same key.
+* Nonces and salts do not need to be secret.
+* Use a cryptographically secure random generator for salts, nonces, and random keys.
+* Do not hard-code encryption keys or passwords.
+* The master password should never be stored.
+* WASM provides the cryptographic implementation but is **not a secure enclave**; secrets used by browser JavaScript should not be considered inaccessible to the JavaScript environment.
