@@ -4,18 +4,51 @@ This package exposes Rust functionality to JavaScript/TypeScript through WebAsse
 
 It provides:
 
+* Password breach checking
 * Graph operations
 * Encryption and decryption
 * Master key derivation
 * Vault key generation
+* TOTP code generation
+
+Binary data is passed using `Uint8Array`.
 
 ---
 
-## Graph
+# Password Security
 
-### `dfs_wasm`
+## `check_passwords_wasm`
 
-Runs a depth-first search on a graph.
+Checks passwords against the Have I Been Pwned service.
+
+```typescript
+const results = await check_passwords_wasm([
+    "password123",
+    "my-password"
+]);
+```
+
+### Parameters
+
+| Parameter   | Type       | Description        |
+| ----------- | ---------- | ------------------ |
+| `passwords` | `string[]` | Passwords to check |
+
+### Returns
+
+```typescript
+Promise<any>
+```
+
+Returns the results from the password breach check.
+
+---
+
+# Graph
+
+## `dfs_wasm`
+
+Runs a Depth-First Search (DFS) on a graph.
 
 ```typescript
 const visited = dfs_wasm(
@@ -24,24 +57,26 @@ const visited = dfs_wasm(
 );
 ```
 
-**Parameters:**
+### Parameters
 
-* `edges`: JSON string containing the graph edges
-* `startId`: UUID of the starting node
+| Parameter   | Type     | Description         |
+| ----------- | -------- | ------------------- |
+| `edgesJson` | `string` | Graph edges as JSON |
+| `startId`   | `string` | Starting node UUID  |
 
-**Returns:**
+### Returns
 
 ```typescript
 Set<string>
 ```
 
-containing the visited node IDs.
+A set containing the visited node IDs.
 
 ---
 
-### `spof_wasm`
+## `spof_wasm`
 
-Finds Single Points of Failure in the graph.
+Finds Single Points of Failure (SPOF) in a graph.
 
 ```typescript
 const spofs = spof_wasm(
@@ -50,18 +85,20 @@ const spofs = spof_wasm(
 );
 ```
 
-**Parameters:**
+### Parameters
 
-* `edges`: JSON string containing the graph edges
-* `startId`: UUID of the starting node
+| Parameter   | Type     | Description         |
+| ----------- | -------- | ------------------- |
+| `edgesJson` | `string` | Graph edges as JSON |
+| `startId`   | `string` | Starting node UUID  |
 
-**Returns:**
+### Returns
 
 ```typescript
 string[]
 ```
 
-containing the SPOF node IDs.
+An array containing the SPOF node IDs.
 
 ---
 
@@ -74,30 +111,18 @@ The cryptographic API uses:
 * AEAD encryption
 * Argon2id for password-based key derivation
 
-Binary data is passed between JavaScript and WASM using `Uint8Array`.
-
----
-
 ## `encrypt_wasm`
 
-Encrypts a JavaScript value.
+Encrypts a JSON-compatible JavaScript value.
 
 ```typescript
-const key = new Uint8Array(32);
-
-const nonce = crypto.getRandomValues(
-    new Uint8Array(24)
-);
-
-const data = {
-    username: "alice",
-    password: "secret"
-};
-
 const encrypted = encrypt_wasm(
     key,
     nonce,
-    data
+    {
+        username: "alice",
+        password: "secret"
+    }
 );
 ```
 
@@ -109,17 +134,15 @@ const encrypted = encrypt_wasm(
 | `nonce`   | `Uint8Array` | 24-byte nonce          |
 | `value`   | `any`        | JSON-compatible value  |
 
-### Important
+A **new nonce must be used for every encryption with the same key**.
 
-A **new nonce must be generated for every encryption with the same key**.
-
-The nonce does not need to be secret and can be stored alongside the ciphertext.
+The nonce does not need to be secret.
 
 ---
 
 ## `decrypt_wasm`
 
-Decrypts previously encrypted data.
+Decrypts data previously encrypted with `encrypt_wasm`.
 
 ```typescript
 const decrypted = decrypt_wasm(
@@ -129,7 +152,15 @@ const decrypted = decrypt_wasm(
 );
 ```
 
-The same `key` and `nonce` used for encryption must be provided.
+### Parameters
+
+| Parameter | Type         | Description            |
+| --------- | ------------ | ---------------------- |
+| `key`     | `Uint8Array` | 32-byte encryption key |
+| `nonce`   | `Uint8Array` | 24-byte nonce          |
+| `value`   | `any`        | Encrypted value        |
+
+The same key and nonce used for encryption must be provided.
 
 ---
 
@@ -137,7 +168,7 @@ The same `key` and `nonce` used for encryption must be provided.
 
 ## `derive_master_key_wasm`
 
-Derives a 32-byte master key from a password and a salt using Argon2id.
+Derives a 32-byte master key from a password using Argon2id.
 
 ```typescript
 const password = new TextEncoder().encode(
@@ -156,10 +187,10 @@ const masterKey = derive_master_key_wasm(
 
 ### Parameters
 
-| Parameter        | Type         | Description            |
-| ---------------- | ------------ | ---------------------- |
-| `masterPassword` | `Uint8Array` | User password as bytes |
-| `salt`           | `Uint8Array` | Random salt            |
+| Parameter        | Type         | Description    |
+| ---------------- | ------------ | -------------- |
+| `masterPassword` | `Uint8Array` | Password bytes |
+| `salt`           | `Uint8Array` | Random salt    |
 
 ### Returns
 
@@ -167,15 +198,15 @@ const masterKey = derive_master_key_wasm(
 Uint8Array
 ```
 
-The returned key is always **32 bytes**.
+A 32-byte master key.
 
-The salt is not secret and should be stored with the encrypted data.
+The salt is not secret and can be stored with the encrypted data.
 
 ---
 
 ## `generate_vault_key_wasm`
 
-Generates a cryptographically secure random 32-byte key.
+Generates a random 32-byte vault key.
 
 ```typescript
 const vaultKey = generate_vault_key_wasm();
@@ -187,75 +218,57 @@ const vaultKey = generate_vault_key_wasm();
 Uint8Array
 ```
 
-containing 32 random bytes.
+A cryptographically secure 32-byte key.
 
 ---
 
-# Typical Vault Flow
+# TOTP
 
-A typical vault can use the API like this:
+## `get_totp_code`
 
-```text
-Password
-   │
-   ▼
-Argon2id
-   │
-   ▼
-Master Key
-   │
-   ▼
-Vault Key
-   │
-   ▼
-AEAD Encryption
-   │
-   ├── Nonce (24 bytes)
-   │
-   └── Ciphertext
-```
-
-Example:
+Generates a TOTP code for a node.
 
 ```typescript
-const password = new TextEncoder().encode(
-    "my password"
+const code = get_totp_code(
+    node,
+    timestamp
+);
+```
+
+### Parameters
+
+| Parameter   | Type     | Description                            |
+| ----------- | -------- | -------------------------------------- |
+| `node`      | `Node`   | Node containing the TOTP configuration |
+| `timestamp` | `number` | Unix timestamp                         |
+
+### Returns
+
+```typescript
+string
+```
+
+The generated TOTP code.
+
+### Example
+
+```typescript
+const code = get_totp_code(
+    node,
+    Math.floor(Date.now() / 1000)
 );
 
-const salt = crypto.getRandomValues(
-    new Uint8Array(16)
-);
-
-const masterKey = derive_master_key_wasm(
-    password,
-    salt
-);
-
-const vaultKey = generate_vault_key_wasm();
-
-const nonce = crypto.getRandomValues(
-    new Uint8Array(24)
-);
-
-const encrypted = encrypt_wasm(
-    vaultKey,
-    nonce,
-    {
-        username: "alice",
-        password: "secret"
-    }
-);
+console.log(code);
 ```
 
 ---
 
 # Security Notes
 
-* Encryption keys must be **32 bytes**.
-* Nonces must be **24 bytes**.
-* Never reuse the same nonce with the same key.
-* Nonces and salts do not need to be secret.
-* Use a cryptographically secure random generator for salts, nonces, and random keys.
-* Do not hard-code encryption keys or passwords.
-* The master password should never be stored.
-* WASM provides the cryptographic implementation but is **not a secure enclave**; secrets used by browser JavaScript should not be considered inaccessible to the JavaScript environment.
+* Use **32-byte keys**.
+* Use **24-byte nonces**.
+* Never reuse a nonce with the same key.
+* Generate salts, nonces, and keys using a secure random generator.
+* Never hard-code passwords or encryption keys.
+* Never store the master password.
+* WASM is **not a secure enclave**. Secrets accessible to JavaScript should be considered accessible to the JavaScript environment.
