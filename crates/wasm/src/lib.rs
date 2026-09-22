@@ -3,14 +3,16 @@ use std::collections::HashSet;
 use serde_json::Value;
 use uuid::Uuid;
 use wasm_bindgen::prelude::*;
+use project_core::import_export::json::{
+    export_json as core_export_json,
+    import_json as core_import_json,
+};
 
 use project_core::{
     business::{
         graph_services::{dfs, spof},
         have_i_been_pwned_service,
-    },
-    crypto::{crypto, key, totp},
-    models::{Edge, Node},
+    }, crypto::{crypto, key, totp}, models::{Edge, History, Node, Vault},
 };
 
 #[wasm_bindgen]
@@ -111,4 +113,43 @@ pub fn get_totp_code(node: JsValue, timestamp: u64) -> Result<String, JsValue> {
         serde_wasm_bindgen::from_value(node).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     totp::generate_code(&node.totp, timestamp).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn export_json(
+    vault: JsValue,
+    nodes: JsValue,
+    edges: JsValue,
+    history: JsValue,
+) -> Result<Vec<u8>, JsValue> {
+    let vault: Vault = serde_wasm_bindgen::from_value(vault)
+        .map_err(|err| JsValue::from_str(&err.to_string()))?;
+
+    let nodes: Vec<Node> = serde_wasm_bindgen::from_value(nodes)
+        .map_err(|err| JsValue::from_str(&err.to_string()))?;
+
+    let edges: Vec<Edge> = serde_wasm_bindgen::from_value(edges)
+        .map_err(|err| JsValue::from_str(&err.to_string()))?;
+
+    let history: Vec<History> = serde_wasm_bindgen::from_value(history)
+        .map_err(|err| JsValue::from_str(&err.to_string()))?;
+
+    core_export_json(
+        &vault,
+        &nodes,
+        &edges,
+        &history,
+    )
+    .map_err(|err| JsValue::from_str(&err.to_string()))
+}
+
+#[wasm_bindgen]
+pub fn import_json(
+    data: &[u8],
+) -> Result<JsValue, JsValue> {
+    let bundle = core_import_json(data)
+        .map_err(|err| JsValue::from_str(&format!("{err:?}")))?;
+
+    serde_wasm_bindgen::to_value(&bundle)
+        .map_err(|err| JsValue::from_str(&err.to_string()))
 }
