@@ -11,7 +11,18 @@ It provides:
 - Vault key generation
 - TOTP code generation
 
-Binary data is passed using `Uint8Array`.
+## Binary data transport
+
+All binary cryptographic data exchanged with Django is represented as a
+Base64 string:
+
+- JavaScript passes Django's Base64 strings directly to WASM.
+- WASM decodes Base64 strings internally before cryptographic operations.
+- WASM returns binary values as Base64 strings.
+- Django stores the returned Base64 strings in its `BinaryField` values.
+
+The expected decoded sizes are 32 bytes for keys, 24 bytes for nonces, and
+32 bytes for Ed25519 public and private keys.
 
 ---
 
@@ -107,10 +118,7 @@ The cryptographic API uses:
 Encrypts a JSON-compatible JavaScript value.
 
 ```typescript
-const encrypted = encrypt_wasm(key, nonce, {
-  username: "alice",
-  password: "secret",
-});
+const encrypted = encrypt_wasm(keyBase64, nonceBase64, dataBase64);
 ```
 
 ### Parameters
@@ -119,7 +127,9 @@ const encrypted = encrypt_wasm(key, nonce, {
 | --------- | -------- | ------------------------------------------------ |
 | `key`     | `string` | Base64-encoded encryption key (32 decoded bytes) |
 | `nonce`   | `string` | Base64-encoded nonce (24 decoded bytes)          |
-| `value`   | `any`    | JSON-compatible value                            |
+| `value`   | `string` | Base64-encoded plaintext data                    |
+
+Returns the encrypted data as a Base64 string.
 
 A **new nonce must be used for every encryption with the same key**.
 
@@ -132,7 +142,7 @@ The nonce does not need to be secret.
 Decrypts data previously encrypted with `encrypt_wasm`.
 
 ```typescript
-const decrypted = decrypt_wasm(key, nonce, encrypted);
+const decryptedBase64 = decrypt_wasm(keyBase64, nonceBase64, encryptedBase64);
 ```
 
 ### Parameters
@@ -141,9 +151,10 @@ const decrypted = decrypt_wasm(key, nonce, encrypted);
 | --------- | -------- | ------------------------------------------------ |
 | `key`     | `string` | Base64-encoded encryption key (32 decoded bytes) |
 | `nonce`   | `string` | Base64-encoded nonce (24 decoded bytes)          |
-| `value`   | `any`    | Encrypted value                                  |
+| `value`   | `string` | Base64-encoded encrypted data                    |
 
 The same key and nonce used for encryption must be provided.
+Returns the decrypted data as a Base64 string.
 
 ---
 
@@ -154,27 +165,23 @@ The same key and nonce used for encryption must be provided.
 Derives a 32-byte master key from a password using Argon2id.
 
 ```typescript
-const password = new TextEncoder().encode("my password");
-
-const salt = crypto.getRandomValues(new Uint8Array(16));
-
-const masterKey = derive_master_key_wasm(password, salt);
+const masterKeyBase64 = derive_master_key_wasm(passwordBase64, saltBase64);
 ```
 
 ### Parameters
 
-| Parameter        | Type         | Description    |
-| ---------------- | ------------ | -------------- |
-| `masterPassword` | `Uint8Array` | Password bytes |
-| `salt`           | `Uint8Array` | Random salt    |
+| Parameter        | Type     | Description                   |
+| ---------------- | -------- | ----------------------------- |
+| `masterPassword` | `string` | Base64-encoded password bytes |
+| `salt`           | `string` | Base64-encoded random salt    |
 
 ### Returns
 
 ```typescript
-Uint8Array;
+string;
 ```
 
-A 32-byte master key.
+A Base64-encoded 32-byte master key, ready to send to Django.
 
 The salt is not secret and can be stored with the encrypted data.
 
@@ -191,10 +198,11 @@ const vaultKey = generate_vault_key_wasm();
 ### Returns
 
 ```typescript
-Uint8Array;
+string;
 ```
 
-A cryptographically secure 32-byte key.
+A Base64-encoded cryptographically secure 32-byte key, ready to store in a
+Django `BinaryField`.
 
 ---
 
@@ -213,13 +221,14 @@ const publicKey = keypair.publicKey;
 
 ```typescript
 {
-  privateKey: Uint8Array;
-  publicKey: Uint8Array;
+  privateKey: string;
+  publicKey: string;
 }
 ```
 
 Both keys contain 32 bytes. The private key must remain secret; the public key
-can be shared. To send data, please encrypt privatekey with master key and send keys in string for django BinaryField
+can be shared. Both values are Base64 strings ready to send to Django. The
+private key should be encrypted with the master key before storage.
 
 ---
 
