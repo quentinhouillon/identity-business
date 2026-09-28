@@ -198,6 +198,31 @@ A cryptographically secure 32-byte key.
 
 ---
 
+## `generate_asymmetric_keypair_wasm`
+
+Generates an Ed25519 asymmetric key pair.
+
+```typescript
+const keypair = generate_asymmetric_keypair_wasm();
+
+const privateKey = keypair.privateKey;
+const publicKey = keypair.publicKey;
+```
+
+### Returns
+
+```typescript
+{
+  privateKey: Uint8Array;
+  publicKey: Uint8Array;
+}
+```
+
+Both keys contain 32 bytes. The private key must remain secret; the public key
+can be shared. To send data, please encrypt privatekey with master key and send keys in string for django BinaryField
+
+---
+
 # TOTP
 
 ## `get_totp_code`

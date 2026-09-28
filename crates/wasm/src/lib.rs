@@ -116,6 +116,18 @@ pub fn generate_vault_key_wasm() -> Vec<u8> {
 }
 
 #[wasm_bindgen]
+pub fn generate_asymmetric_keypair_wasm() -> Result<JsValue, JsValue> {
+    let (private_key, public_key) = key::generate_asymmetric_keypair()
+        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+
+    serde_wasm_bindgen::to_value(&serde_json::json!({
+        "privateKey": private_key.to_vec(),
+        "publicKey": public_key.to_vec(),
+    }))
+    .map_err(|error| JsValue::from_str(&error.to_string()))
+}
+
+#[wasm_bindgen]
 pub fn get_totp_code(node: JsValue, timestamp: u64) -> Result<String, JsValue> {
     let node: Node =
         serde_wasm_bindgen::from_value(node).map_err(|e| JsValue::from_str(&e.to_string()))?;
