@@ -1,19 +1,37 @@
 use std::collections::HashSet;
 
+use base64::{engine::general_purpose, Engine as _};
+use project_core::import_export::json::{
+    export_json as core_export_json, import_json as core_import_json,
+};
 use serde_json::Value;
 use uuid::Uuid;
 use wasm_bindgen::prelude::*;
-use project_core::import_export::json::{
-    export_json as core_export_json,
-    import_json as core_import_json,
-};
 
 use project_core::{
     business::{
         graph_services::{dfs, spof},
         have_i_been_pwned_service,
-    }, crypto::{crypto, key, totp}, models::{Edge, History, Node, Vault},
+    },
+    crypto::{crypto, key, totp},
+    models::{Edge, History, Node, Vault},
 };
+
+fn decode_key(key: &str) -> Result<[u8; 32], JsValue> {
+    general_purpose::STANDARD
+        .decode(key)
+        .map_err(|_| JsValue::from_str("Invalid Base64 key"))?
+        .try_into()
+        .map_err(|_| JsValue::from_str("Key must decode to exactly 32 bytes"))
+}
+
+fn decode_nonce(nonce: &str) -> Result<[u8; 24], JsValue> {
+    general_purpose::STANDARD
+        .decode(nonce)
+        .map_err(|_| JsValue::from_str("Invalid Base64 nonce"))?
+        .try_into()
+        .map_err(|_| JsValue::from_str("Nonce must decode to exactly 24 bytes"))
+}
 
 #[wasm_bindgen]
 pub async fn check_passwords_wasm(passwords: Vec<String>) -> Result<JsValue, JsValue> {
@@ -53,14 +71,9 @@ pub fn spof_wasm(edges_json: &str, start_id: &str) -> Result<JsValue, JsValue> {
 }
 
 #[wasm_bindgen]
-pub fn encrypt_wasm(key: &[u8], nonce: &[u8], value: JsValue) -> Result<JsValue, JsValue> {
-    let key: [u8; 32] = key
-        .try_into()
-        .map_err(|_| JsValue::from_str("Key must be exactly 32 bytes"))?;
-
-    let nonce: [u8; 24] = nonce
-        .try_into()
-        .map_err(|_| JsValue::from_str("nonce must be exactly 24 bytes"))?;
+pub fn encrypt_wasm(key: &str, nonce: &str, value: JsValue) -> Result<JsValue, JsValue> {
+    let key = decode_key(key)?;
+    let nonce = decode_nonce(nonce)?;
 
     let data: Value =
         serde_wasm_bindgen::from_value(value).map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -74,14 +87,9 @@ pub fn encrypt_wasm(key: &[u8], nonce: &[u8], value: JsValue) -> Result<JsValue,
 }
 
 #[wasm_bindgen]
-pub fn decrypt_wasm(key: &[u8], nonce: &[u8], value: JsValue) -> Result<JsValue, JsValue> {
-    let key: [u8; 32] = key
-        .try_into()
-        .map_err(|_| JsValue::from_str("Key must be exactly 32 bytes"))?;
-
-    let nonce: [u8; 24] = nonce
-        .try_into()
-        .map_err(|_| JsValue::from_str("nonce must be exactly 24 bytes"))?;
+pub fn decrypt_wasm(key: &str, nonce: &str, value: JsValue) -> Result<JsValue, JsValue> {
+    let key = decode_key(key)?;
+    let nonce = decode_nonce(nonce)?;
 
     let data: Value =
         serde_wasm_bindgen::from_value(value).map_err(|e| JsValue::from_str(&e.to_string()))?;
@@ -122,34 +130,25 @@ pub fn export_json(
     edges: JsValue,
     history: JsValue,
 ) -> Result<Vec<u8>, JsValue> {
-    let vault: Vault = serde_wasm_bindgen::from_value(vault)
-        .map_err(|err| JsValue::from_str(&err.to_string()))?;
+    let vault: Vault =
+        serde_wasm_bindgen::from_value(vault).map_err(|err| JsValue::from_str(&err.to_string()))?;
 
-    let nodes: Vec<Node> = serde_wasm_bindgen::from_value(nodes)
-        .map_err(|err| JsValue::from_str(&err.to_string()))?;
+    let nodes: Vec<Node> =
+        serde_wasm_bindgen::from_value(nodes).map_err(|err| JsValue::from_str(&err.to_string()))?;
 
-    let edges: Vec<Edge> = serde_wasm_bindgen::from_value(edges)
-        .map_err(|err| JsValue::from_str(&err.to_string()))?;
+    let edges: Vec<Edge> =
+        serde_wasm_bindgen::from_value(edges).map_err(|err| JsValue::from_str(&err.to_string()))?;
 
     let history: Vec<History> = serde_wasm_bindgen::from_value(history)
         .map_err(|err| JsValue::from_str(&err.to_string()))?;
 
-    core_export_json(
-        &vault,
-        &nodes,
-        &edges,
-        &history,
-    )
-    .map_err(|err| JsValue::from_str(&err.to_string()))
+    core_export_json(&vault, &nodes, &edges, &history)
+        .map_err(|err| JsValue::from_str(&err.to_string()))
 }
 
 #[wasm_bindgen]
-pub fn import_json(
-    data: &[u8],
-) -> Result<JsValue, JsValue> {
-    let bundle = core_import_json(data)
-        .map_err(|err| JsValue::from_str(&format!("{err:?}")))?;
+pub fn import_json(data: &[u8]) -> Result<JsValue, JsValue> {
+    let bundle = core_import_json(data).map_err(|err| JsValue::from_str(&format!("{err:?}")))?;
 
-    serde_wasm_bindgen::to_value(&bundle)
-        .map_err(|err| JsValue::from_str(&err.to_string()))
+    serde_wasm_bindgen::to_value(&bundle).map_err(|err| JsValue::from_str(&err.to_string()))
 }

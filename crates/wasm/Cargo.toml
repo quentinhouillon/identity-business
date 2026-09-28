@@ -8,6 +8,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 project_core = { path = "../project_core" }
+base64 = "0.22"
 
 wasm-bindgen = "0.2"
 serde-wasm-bindgen = "0.6"

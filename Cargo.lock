@@ -1528,6 +1528,7 @@ dependencies = [
 name = "vault-wasm"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "project_core",
  "serde",
  "serde-wasm-bindgen",
