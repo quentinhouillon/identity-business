@@ -21,4 +21,13 @@ pub enum CryptoError {
     
     #[error("Key Generation Failed")]
     KeyGenerationFailed,
+
+    #[error("Unsupported Version")]
+    UnsupportedVersion,
+    
+    #[error("Invalid Salt")]
+    InvalidSalt,
+    
+    #[error("Unsupported Message Type")]
+    UnsupportedMessageType
 }

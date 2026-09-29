@@ -1,6 +1,8 @@
-use std::collections::HashSet;
+pub mod helper;
 
-use base64::{engine::general_purpose::STANDARD, Engine as _};
+use std::collections::HashSet;
+use helper::{decode_base64, decode_key, decode_uuid, encode_base64};
+
 use project_core::import_export::json::{
     export_json as core_export_json,
     import_json as core_import_json,
@@ -17,43 +19,30 @@ use project_core::{
     models::{Edge, History, Node, Vault},
 };
 
-fn decode_key(key: &str) -> Result<[u8; 32], JsValue> {
-    STANDARD
-        .decode(key)
-        .map_err(|_| JsValue::from_str("Invalid Base64 key"))?
-        .try_into()
-        .map_err(|_| JsValue::from_str("Key must decode to exactly 32 bytes"))
-}
-
-fn decode_nonce(nonce: &str) -> Result<[u8; 24], JsValue> {
-    STANDARD
-        .decode(nonce)
-        .map_err(|_| JsValue::from_str("Invalid Base64 nonce"))?
-        .try_into()
-        .map_err(|_| JsValue::from_str("Nonce must decode to exactly 24 bytes"))
-}
-
-fn decode_base64(value: &str) -> Result<Vec<u8>, JsValue> {
-    STANDARD
-        .decode(value)
-        .map_err(|_| JsValue::from_str("Invalid Base64 data"))
-}
-
-fn encode_base64(value: &[u8]) -> String {
-    STANDARD.encode(value)
-}
+/* -------------------------------------------------------------------------- */
+/* Password breach check                                                      */
+/* -------------------------------------------------------------------------- */
 
 #[wasm_bindgen]
 pub async fn check_passwords_wasm(
     passwords: Vec<String>,
 ) -> Result<JsValue, JsValue> {
-    let results = have_i_been_pwned_service::check_passwords(passwords)
-        .await
-        .map_err(|error| JsValue::from_str(&error.to_string()))?;
+    let results =
+        have_i_been_pwned_service::check_passwords(passwords)
+            .await
+            .map_err(|error| {
+                JsValue::from_str(&error.to_string())
+            })?;
 
     serde_wasm_bindgen::to_value(&results)
-        .map_err(|error| JsValue::from_str(&error.to_string()))
+        .map_err(|error| {
+            JsValue::from_str(&error.to_string())
+        })
 }
+
+/* -------------------------------------------------------------------------- */
+/* Graph algorithms                                                           */
+/* -------------------------------------------------------------------------- */
 
 #[wasm_bindgen]
 pub fn dfs_wasm(
@@ -62,18 +51,28 @@ pub fn dfs_wasm(
 ) -> Result<JsValue, JsValue> {
     let edges: Vec<Edge> =
         serde_json::from_str(edges_json)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|error| {
+                JsValue::from_str(&error.to_string())
+            })?;
 
     let start_id =
         Uuid::parse_str(start_id)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|error| {
+                JsValue::from_str(&error.to_string())
+            })?;
 
     let mut visited = HashSet::new();
 
-    dfs(&edges, &start_id, &mut visited);
+    dfs(
+        &edges,
+        &start_id,
+        &mut visited,
+    );
 
     serde_wasm_bindgen::to_value(&visited)
-        .map_err(|e| JsValue::from_str(&e.to_string()))
+        .map_err(|error| {
+            JsValue::from_str(&error.to_string())
+        })
 }
 
 #[wasm_bindgen]
@@ -83,34 +82,69 @@ pub fn spof_wasm(
 ) -> Result<JsValue, JsValue> {
     let edges: Vec<Edge> =
         serde_json::from_str(edges_json)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|error| {
+                JsValue::from_str(&error.to_string())
+            })?;
 
     let start_id =
         Uuid::parse_str(start_id)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|error| {
+                JsValue::from_str(&error.to_string())
+            })?;
 
-    let spofs = spof(&edges, &[start_id]);
+    let spofs = spof(
+        &edges,
+        &[start_id],
+    );
 
     let result: Vec<String> =
-        spofs.into_iter().map(|id| id.to_string()).collect();
+        spofs
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect();
 
     serde_wasm_bindgen::to_value(&result)
-        .map_err(|e| JsValue::from_str(&e.to_string()))
+        .map_err(|error| {
+            JsValue::from_str(&error.to_string())
+        })
 }
+
+/* -------------------------------------------------------------------------- */
+/* Generic Vault data encryption                                               */
+/* -------------------------------------------------------------------------- */
 
 #[wasm_bindgen]
 pub fn encrypt_wasm(
     key: &str,
-    nonce: &str,
+    message_type: u8,
+    vault_id: &str,
+    object_id: &str,
     value: &str,
 ) -> Result<String, JsValue> {
     let key = decode_key(key)?;
-    let nonce = decode_nonce(nonce)?;
-    let data = decode_base64(value)?;
+
+    let vault_id =
+        decode_uuid(vault_id, "vault_id")?;
+
+    let object_id =
+        decode_uuid(object_id, "object_id")?;
+
+    let plaintext =
+        decode_base64(value)?;
 
     let encrypted =
-        crypto::encrypt(&key, &nonce, &data)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        crypto::encrypt_data(
+            &key,
+            message_type,
+            &vault_id,
+            &object_id,
+            &plaintext,
+        )
+        .map_err(|error| {
+            JsValue::from_str(
+                &error.to_string(),
+            )
+        })?;
 
     Ok(encode_base64(&encrypted))
 }
@@ -118,41 +152,90 @@ pub fn encrypt_wasm(
 #[wasm_bindgen]
 pub fn decrypt_wasm(
     key: &str,
-    nonce: &str,
+    message_type: u8,
+    vault_id: &str,
+    object_id: &str,
     value: &str,
 ) -> Result<String, JsValue> {
     let key = decode_key(key)?;
-    let nonce = decode_nonce(nonce)?;
-    let encrypted = decode_base64(value)?;
 
-    let decrypted =
-        crypto::decrypt(&key, &nonce, &encrypted)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let vault_id =
+        decode_uuid(vault_id, "vault_id")?;
 
-    Ok(encode_base64(&decrypted))
+    let object_id =
+        decode_uuid(object_id, "object_id")?;
+
+    let encrypted =
+        decode_base64(value)?;
+
+    let plaintext =
+        crypto::decrypt_data(
+            &key,
+            message_type,
+            &vault_id,
+            &object_id,
+            &encrypted,
+        )
+        .map_err(|error| {
+            JsValue::from_str(
+                &error.to_string(),
+            )
+        })?;
+
+    Ok(encode_base64(&plaintext))
 }
+
+/* -------------------------------------------------------------------------- */
+/* Master key derivation                                                       */
+/* -------------------------------------------------------------------------- */
 
 #[wasm_bindgen]
 pub fn derive_master_key_wasm(
     master_password: &str,
     salt: &str,
 ) -> Result<String, JsValue> {
-    let master_password = decode_base64(master_password)?;
-    let salt = decode_base64(salt)?;
+    let master_password =
+        decode_base64(master_password)?;
 
-    let key =
-        key::derive_master_key(&master_password, &salt)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let salt =
+        decode_base64(salt)?;
 
-    Ok(encode_base64(&key))
+    let master_key =
+        key::derive_master_key(
+            &master_password,
+            &salt,
+        )
+        .map_err(|error| {
+            JsValue::from_str(
+                &error.to_string(),
+            )
+        })?;
+
+    Ok(encode_base64(&master_key))
 }
+
+/* -------------------------------------------------------------------------- */
+/* Vault key                                                                   */
+/* -------------------------------------------------------------------------- */
 
 #[wasm_bindgen]
-pub fn generate_vault_key_wasm() -> String {
-    let key = key::generate_vault_key();
+pub fn generate_vault_key_wasm()
+    -> Result<String, JsValue>
+{
+    let vault_key =
+        key::generate_vault_key()
+            .map_err(|error| {
+                JsValue::from_str(
+                    &error.to_string(),
+                )
+            })?;
 
-    encode_base64(&key)
+    Ok(encode_base64(&vault_key))
 }
+
+/* -------------------------------------------------------------------------- */
+/* X25519 key pair                                                             */
+/* -------------------------------------------------------------------------- */
 
 #[wasm_bindgen]
 pub fn generate_asymmetric_keypair_wasm()
@@ -160,7 +243,11 @@ pub fn generate_asymmetric_keypair_wasm()
 {
     let (private_key, public_key) =
         key::generate_asymmetric_keypair()
-            .map_err(|error| JsValue::from_str(&error.to_string()))?;
+            .map_err(|error| {
+                JsValue::from_str(
+                    &error.to_string(),
+                )
+            })?;
 
     let result = serde_json::json!({
         "privateKey": encode_base64(&private_key),
@@ -168,8 +255,156 @@ pub fn generate_asymmetric_keypair_wasm()
     });
 
     serde_wasm_bindgen::to_value(&result)
-        .map_err(|error| JsValue::from_str(&error.to_string()))
+        .map_err(|error| {
+            JsValue::from_str(
+                &error.to_string(),
+            )
+        })
 }
+
+/* -------------------------------------------------------------------------- */
+/* Vault key wrapping                                                          */
+/* -------------------------------------------------------------------------- */
+
+#[wasm_bindgen]
+pub fn encrypt_vault_key_wasm(
+    recipient_public_key: &str,
+    vault_id: &str,
+    user_id: &str,
+    vault_key: &str,
+) -> Result<String, JsValue> {
+    let recipient_public_key =
+        decode_key(recipient_public_key)?;
+
+    let vault_id =
+        decode_uuid(vault_id, "vault_id")?;
+
+    let user_id =
+        decode_uuid(user_id, "user_id")?;
+
+    let vault_key =
+        decode_key(vault_key)?;
+
+    let encrypted =
+        crypto::encrypt_vault_key(
+            &recipient_public_key,
+            &vault_id,
+            &user_id,
+            &vault_key,
+        )
+        .map_err(|error| {
+            JsValue::from_str(
+                &error.to_string(),
+            )
+        })?;
+
+    Ok(encode_base64(&encrypted))
+}
+
+#[wasm_bindgen]
+pub fn decrypt_vault_key_wasm(
+    private_key: &str,
+    vault_id: &str,
+    user_id: &str,
+    encrypted_vault_key: &str,
+) -> Result<String, JsValue> {
+    let private_key =
+        decode_key(private_key)?;
+
+    let vault_id =
+        decode_uuid(vault_id, "vault_id")?;
+
+    let user_id =
+        decode_uuid(user_id, "user_id")?;
+
+    let encrypted_vault_key =
+        decode_base64(encrypted_vault_key)?;
+
+    let vault_key =
+        crypto::decrypt_vault_key(
+            &private_key,
+            &vault_id,
+            &user_id,
+            &encrypted_vault_key,
+        )
+        .map_err(|error| {
+            JsValue::from_str(
+                &error.to_string(),
+            )
+        })?;
+
+    Ok(encode_base64(&vault_key))
+}
+
+/* -------------------------------------------------------------------------- */
+/* Private key encryption                                                     */
+/* -------------------------------------------------------------------------- */
+
+#[wasm_bindgen]
+pub fn encrypt_private_key_wasm(
+    master_key: &str,
+    user_id: &str,
+    private_key: &str,
+) -> Result<String, JsValue> {
+    let master_key =
+        decode_key(master_key)?;
+
+    let user_id =
+        decode_uuid(user_id, "user_id")?;
+
+    let private_key =
+        decode_key(private_key)?;
+
+    let encrypted =
+        crypto::encrypt_private_key(
+            &master_key,
+            &user_id,
+            &private_key,
+        )
+        .map_err(|error| {
+            JsValue::from_str(
+                &error.to_string(),
+            )
+        })?;
+
+    Ok(encode_base64(&encrypted))
+}
+
+#[wasm_bindgen]
+pub fn decrypt_private_key_wasm(
+    master_key: &str,
+    user_id: &str,
+    encrypted_private_key: &str,
+) -> Result<String, JsValue> {
+    let master_key =
+        decode_key(master_key)?;
+
+    let user_id =
+        decode_uuid(user_id, "user_id")?;
+
+    let encrypted_private_key =
+        decode_base64(
+            encrypted_private_key,
+        )?;
+
+    let private_key =
+        crypto::decrypt_private_key(
+            &master_key,
+            &user_id,
+            &encrypted_private_key,
+        )
+        .map_err(|error| {
+            JsValue::from_str(
+                &error.to_string(),
+            )
+        })?;
+
+    Ok(encode_base64(&private_key))
+}
+
+/* -------------------------------------------------------------------------- */
+/* TOTP                                                                        */
+/* -------------------------------------------------------------------------- */
 
 #[wasm_bindgen]
 pub fn get_totp_code(
@@ -178,11 +413,26 @@ pub fn get_totp_code(
 ) -> Result<String, JsValue> {
     let node: Node =
         serde_wasm_bindgen::from_value(node)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+            .map_err(|error| {
+                JsValue::from_str(
+                    &error.to_string(),
+                )
+            })?;
 
-    totp::generate_code(&node.totp, timestamp)
-        .map_err(|e| JsValue::from_str(&e.to_string()))
+    totp::generate_code(
+        &node.totp,
+        timestamp,
+    )
+    .map_err(|error| {
+        JsValue::from_str(
+            &error.to_string(),
+        )
+    })
 }
+
+/* -------------------------------------------------------------------------- */
+/* Import / export                                                             */
+/* -------------------------------------------------------------------------- */
 
 #[wasm_bindgen]
 pub fn export_json(
@@ -193,35 +443,71 @@ pub fn export_json(
 ) -> Result<String, JsValue> {
     let vault: Vault =
         serde_wasm_bindgen::from_value(vault)
-            .map_err(|err| JsValue::from_str(&err.to_string()))?;
+            .map_err(|error| {
+                JsValue::from_str(
+                    &error.to_string(),
+                )
+            })?;
 
     let nodes: Vec<Node> =
         serde_wasm_bindgen::from_value(nodes)
-            .map_err(|err| JsValue::from_str(&err.to_string()))?;
+            .map_err(|error| {
+                JsValue::from_str(
+                    &error.to_string(),
+                )
+            })?;
 
     let edges: Vec<Edge> =
         serde_wasm_bindgen::from_value(edges)
-            .map_err(|err| JsValue::from_str(&err.to_string()))?;
+            .map_err(|error| {
+                JsValue::from_str(
+                    &error.to_string(),
+                )
+            })?;
 
     let history: Vec<History> =
         serde_wasm_bindgen::from_value(history)
-            .map_err(|err| JsValue::from_str(&err.to_string()))?;
+            .map_err(|error| {
+                JsValue::from_str(
+                    &error.to_string(),
+                )
+            })?;
 
     let data =
-        core_export_json(&vault, &nodes, &edges, &history)
-            .map_err(|err| JsValue::from_str(&err.to_string()))?;
+        core_export_json(
+            &vault,
+            &nodes,
+            &edges,
+            &history,
+        )
+        .map_err(|error| {
+            JsValue::from_str(
+                &error.to_string(),
+            )
+        })?;
 
     Ok(encode_base64(&data))
 }
 
 #[wasm_bindgen]
-pub fn import_json(data: &str) -> Result<JsValue, JsValue> {
-    let data = decode_base64(data)?;
+pub fn import_json(
+    data: &str,
+) -> Result<JsValue, JsValue> {
+    let data =
+        decode_base64(data)?;
 
     let bundle =
         core_import_json(&data)
-            .map_err(|err| JsValue::from_str(&format!("{err:?}")))?;
+            .map_err(|error| {
+                JsValue::from_str(
+                    &format!("{error:?}"),
+                )
+            })?;
 
     serde_wasm_bindgen::to_value(&bundle)
-        .map_err(|err| JsValue::from_str(&err.to_string()))
+        .map_err(|error| {
+            JsValue::from_str(
+                &error.to_string(),
+            )
+        })
 }
