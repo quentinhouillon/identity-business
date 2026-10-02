@@ -343,14 +343,10 @@ pub fn decrypt_vault_key_wasm(
 #[wasm_bindgen]
 pub fn encrypt_private_key_wasm(
     master_key: &str,
-    user_id: &str,
     private_key: &str,
 ) -> Result<String, JsValue> {
     let master_key =
         decode_key(master_key)?;
-
-    let user_id =
-        decode_uuid(user_id, "user_id")?;
 
     let private_key =
         decode_key(private_key)?;
@@ -358,7 +354,6 @@ pub fn encrypt_private_key_wasm(
     let encrypted =
         crypto::encrypt_private_key(
             &master_key,
-            &user_id,
             &private_key,
         )
         .map_err(|error| {
@@ -373,14 +368,10 @@ pub fn encrypt_private_key_wasm(
 #[wasm_bindgen]
 pub fn decrypt_private_key_wasm(
     master_key: &str,
-    user_id: &str,
     encrypted_private_key: &str,
 ) -> Result<String, JsValue> {
     let master_key =
         decode_key(master_key)?;
-
-    let user_id =
-        decode_uuid(user_id, "user_id")?;
 
     let encrypted_private_key =
         decode_base64(
@@ -390,7 +381,6 @@ pub fn decrypt_private_key_wasm(
     let private_key =
         crypto::decrypt_private_key(
             &master_key,
-            &user_id,
             &encrypted_private_key,
         )
         .map_err(|error| {

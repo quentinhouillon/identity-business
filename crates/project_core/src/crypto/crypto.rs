@@ -1,19 +1,14 @@
 use crate::crypto::{
     crypto_error::CryptoError,
-    key::{
-        derive_x25519_aead_key,
-        PROTOCOL_NAME,
-        PROTOCOL_VERSION,
-    },
+    key::{PROTOCOL_NAME, PROTOCOL_VERSION, derive_x25519_aead_key},
 };
 
 use chacha20poly1305::{
+    XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit, Payload},
-    XChaCha20Poly1305,
-    XNonce,
 };
 
-use rand::{rngs::SysRng, TryRng};
+use rand::{TryRng, rngs::SysRng};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 pub const TYPE_VAULT_KEY_WRAP: u8 = 0x01;
@@ -28,15 +23,11 @@ const NONCE_SIZE: usize = 24;
 const TAG_SIZE: usize = 16;
 const KEY_SIZE: usize = 32;
 
-const MIN_DATA_SIZE: usize =
-    1 + NONCE_SIZE + TAG_SIZE;
+const MIN_DATA_SIZE: usize = 1 + NONCE_SIZE + TAG_SIZE;
 
-const MIN_VAULT_KEY_SIZE: usize =
-    1 + KEY_SIZE + NONCE_SIZE + TAG_SIZE;
+const MIN_VAULT_KEY_SIZE: usize = 1 + KEY_SIZE + NONCE_SIZE + TAG_SIZE;
 
-const MIN_PRIVATE_KEY_SIZE: usize =
-    1 + NONCE_SIZE + KEY_SIZE + TAG_SIZE;
-
+const MIN_PRIVATE_KEY_SIZE: usize = 1 + NONCE_SIZE + KEY_SIZE + TAG_SIZE;
 
 /// Checks whether the message type belongs to the current protocol.
 fn is_valid_message_type(message_type: u8) -> bool {
@@ -51,24 +42,15 @@ fn is_valid_message_type(message_type: u8) -> bool {
     )
 }
 
-
 /// Builds authenticated additional data.
 ///
 /// The AAD is not secret.
 /// It binds the ciphertext to its protocol, type, Vault and object.
-fn build_aad(
-    version: u8,
-    message_type: u8,
-    vault_id: &[u8],
-    object_id: &[u8],
-) -> Vec<u8> {
-    let mut aad = Vec::with_capacity(
-        PROTOCOL_NAME.len()
-            + 2
-            + 4
-            + vault_id.len()
-            + object_id.len(),
-    );
+fn build_aad(version: u8, message_type: u8, vault_id: &[u8], object_id: Option<&[u8]>) -> Vec<u8> {
+    let object_id = object_id.unwrap_or(&[]);
+
+    let mut aad =
+        Vec::with_capacity(PROTOCOL_NAME.len() + 2 + 4 + vault_id.len() + object_id.len());
 
     aad.extend_from_slice(PROTOCOL_NAME);
 
@@ -79,21 +61,16 @@ fn build_aad(
     aad.push(message_type);
 
     // Explicit lengths avoid ambiguous concatenation.
-    aad.extend_from_slice(
-        &(vault_id.len() as u32).to_be_bytes(),
-    );
+    aad.extend_from_slice(&(vault_id.len() as u32).to_be_bytes());
 
     aad.extend_from_slice(vault_id);
 
-    aad.extend_from_slice(
-        &(object_id.len() as u32).to_be_bytes(),
-    );
+    aad.extend_from_slice(&(object_id.len() as u32).to_be_bytes());
 
     aad.extend_from_slice(object_id);
 
     aad
 }
-
 
 /// Generates a cryptographically random XChaCha20 nonce.
 fn generate_nonce() -> Result<[u8; NONCE_SIZE], CryptoError> {
@@ -105,7 +82,6 @@ fn generate_nonce() -> Result<[u8; NONCE_SIZE], CryptoError> {
 
     Ok(nonce)
 }
-
 
 /// Encrypts arbitrary Vault data.
 ///
@@ -130,19 +106,12 @@ pub fn encrypt_data(
         return Err(CryptoError::UnsupportedMessageType);
     }
 
-    let cipher =
-        XChaCha20Poly1305::new_from_slice(key)
-            .map_err(|_| CryptoError::InvalidKey)?;
+    let cipher = XChaCha20Poly1305::new_from_slice(key).map_err(|_| CryptoError::InvalidKey)?;
 
     let nonce_bytes = generate_nonce()?;
     let nonce = XNonce::from(nonce_bytes);
 
-    let aad = build_aad(
-        PROTOCOL_VERSION,
-        message_type,
-        vault_id,
-        object_id,
-    );
+    let aad = build_aad(PROTOCOL_VERSION, message_type, vault_id, Some(object_id));
 
     let ciphertext = cipher
         .encrypt(
@@ -154,9 +123,7 @@ pub fn encrypt_data(
         )
         .map_err(|_| CryptoError::EncryptionFailed)?;
 
-    let mut output = Vec::with_capacity(
-        1 + NONCE_SIZE + ciphertext.len(),
-    );
+    let mut output = Vec::with_capacity(1 + NONCE_SIZE + ciphertext.len());
 
     output.push(PROTOCOL_VERSION);
     output.extend_from_slice(&nonce_bytes);
@@ -164,7 +131,6 @@ pub fn encrypt_data(
 
     Ok(output)
 }
-
 
 /// Decrypts arbitrary Vault data.
 ///
@@ -194,26 +160,17 @@ pub fn decrypt_data(
         return Err(CryptoError::UnsupportedVersion);
     }
 
-    let nonce_bytes: [u8; NONCE_SIZE] =
-        encrypted[1..1 + NONCE_SIZE]
-            .try_into()
-            .map_err(|_| CryptoError::DecryptionFailed)?;
+    let nonce_bytes: [u8; NONCE_SIZE] = encrypted[1..1 + NONCE_SIZE]
+        .try_into()
+        .map_err(|_| CryptoError::DecryptionFailed)?;
 
-    let ciphertext =
-        &encrypted[1 + NONCE_SIZE..];
+    let ciphertext = &encrypted[1 + NONCE_SIZE..];
 
     let nonce = XNonce::from(nonce_bytes);
 
-    let aad = build_aad(
-        version,
-        expected_type,
-        vault_id,
-        object_id,
-    );
+    let aad = build_aad(version, expected_type, vault_id, Some(object_id));
 
-    let cipher =
-        XChaCha20Poly1305::new_from_slice(key)
-            .map_err(|_| CryptoError::InvalidKey)?;
+    let cipher = XChaCha20Poly1305::new_from_slice(key).map_err(|_| CryptoError::InvalidKey)?;
 
     cipher
         .decrypt(
@@ -225,7 +182,6 @@ pub fn decrypt_data(
         )
         .map_err(|_| CryptoError::DecryptionFailed)
 }
-
 
 /// Encrypts a Vault key for a specific recipient.
 ///
@@ -244,8 +200,7 @@ pub fn encrypt_vault_key(
     user_id: &[u8],
     vault_key: &[u8; KEY_SIZE],
 ) -> Result<Vec<u8>, CryptoError> {
-    let recipient_public =
-        PublicKey::from(*recipient_public_key);
+    let recipient_public = PublicKey::from(*recipient_public_key);
 
     // Generate a fresh ephemeral X25519 key pair.
     let mut ephemeral_bytes = [0u8; KEY_SIZE];
@@ -254,37 +209,20 @@ pub fn encrypt_vault_key(
         .try_fill_bytes(&mut ephemeral_bytes)
         .map_err(|_| CryptoError::EncryptionFailed)?;
 
-    let ephemeral_secret =
-        StaticSecret::from(ephemeral_bytes);
+    let ephemeral_secret = StaticSecret::from(ephemeral_bytes);
 
-    let ephemeral_public =
-        PublicKey::from(&ephemeral_secret);
+    let ephemeral_public = PublicKey::from(&ephemeral_secret);
 
-    let shared_secret =
-        ephemeral_secret.diffie_hellman(
-            &recipient_public,
-        );
+    let shared_secret = ephemeral_secret.diffie_hellman(&recipient_public);
 
     // Reject invalid all-zero X25519 shared secrets.
-    if shared_secret
-        .as_bytes()
-        .iter()
-        .all(|&byte| byte == 0)
-    {
+    if shared_secret.as_bytes().iter().all(|&byte| byte == 0) {
         return Err(CryptoError::EncryptionFailed);
     }
 
-    let encryption_key =
-        derive_x25519_aead_key(
-            shared_secret.as_bytes(),
-            vault_id,
-            user_id,
-        )?;
+    let encryption_key = derive_x25519_aead_key(shared_secret.as_bytes(), vault_id, user_id)?;
 
-    let cipher =
-        XChaCha20Poly1305::new_from_slice(
-            &encryption_key,
-        )
+    let cipher = XChaCha20Poly1305::new_from_slice(&encryption_key)
         .map_err(|_| CryptoError::EncryptionFailed)?;
 
     let nonce_bytes = generate_nonce()?;
@@ -294,7 +232,7 @@ pub fn encrypt_vault_key(
         PROTOCOL_VERSION,
         TYPE_VAULT_KEY_WRAP,
         vault_id,
-        user_id,
+        Some(user_id),
     );
 
     let encrypted = cipher
@@ -307,22 +245,17 @@ pub fn encrypt_vault_key(
         )
         .map_err(|_| CryptoError::EncryptionFailed)?;
 
-    let mut output = Vec::with_capacity(
-        1 + KEY_SIZE + NONCE_SIZE + encrypted.len(),
-    );
+    let mut output = Vec::with_capacity(1 + KEY_SIZE + NONCE_SIZE + encrypted.len());
 
     output.push(PROTOCOL_VERSION);
 
-    output.extend_from_slice(
-        ephemeral_public.as_bytes(),
-    );
+    output.extend_from_slice(ephemeral_public.as_bytes());
 
     output.extend_from_slice(&nonce_bytes);
     output.extend_from_slice(&encrypted);
 
     Ok(output)
 }
-
 
 /// Decrypts a Vault key using the recipient's X25519 private key.
 pub fn decrypt_vault_key(
@@ -341,60 +274,33 @@ pub fn decrypt_vault_key(
         return Err(CryptoError::UnsupportedVersion);
     }
 
-    let ephemeral_public =
-        PublicKey::from(
-            <[u8; KEY_SIZE]>::try_from(
-                &encrypted[1..33],
-            )
-            .map_err(|_| CryptoError::DecryptionFailed)?,
-        );
+    let ephemeral_public = PublicKey::from(
+        <[u8; KEY_SIZE]>::try_from(&encrypted[1..33]).map_err(|_| CryptoError::DecryptionFailed)?,
+    );
 
-    let nonce_bytes =
-        <[u8; NONCE_SIZE]>::try_from(
-            &encrypted[33..57],
-        )
+    let nonce_bytes = <[u8; NONCE_SIZE]>::try_from(&encrypted[33..57])
         .map_err(|_| CryptoError::DecryptionFailed)?;
 
     let ciphertext = &encrypted[57..];
 
-    let recipient_private =
-        StaticSecret::from(*private_key);
+    let recipient_private = StaticSecret::from(*private_key);
 
-    let shared_secret =
-        recipient_private.diffie_hellman(
-            &ephemeral_public,
-        );
+    let shared_secret = recipient_private.diffie_hellman(&ephemeral_public);
 
-    if shared_secret
-        .as_bytes()
-        .iter()
-        .all(|&byte| byte == 0)
-    {
+    if shared_secret.as_bytes().iter().all(|&byte| byte == 0) {
         return Err(CryptoError::DecryptionFailed);
     }
 
     let encryption_key =
-        crate::crypto::key::derive_x25519_aead_key(
-            shared_secret.as_bytes(),
-            vault_id,
-            user_id,
-        )
-        .map_err(|_| CryptoError::DecryptionFailed)?;
+        crate::crypto::key::derive_x25519_aead_key(shared_secret.as_bytes(), vault_id, user_id)
+            .map_err(|_| CryptoError::DecryptionFailed)?;
 
-    let cipher =
-        XChaCha20Poly1305::new_from_slice(
-            &encryption_key,
-        )
+    let cipher = XChaCha20Poly1305::new_from_slice(&encryption_key)
         .map_err(|_| CryptoError::DecryptionFailed)?;
 
     let nonce = XNonce::from(nonce_bytes);
 
-    let aad = build_aad(
-        version,
-        TYPE_VAULT_KEY_WRAP,
-        vault_id,
-        user_id,
-    );
+    let aad = build_aad(version, TYPE_VAULT_KEY_WRAP, vault_id, Some(user_id));
 
     let plaintext = cipher
         .decrypt(
@@ -411,7 +317,6 @@ pub fn decrypt_vault_key(
         .map_err(|_| CryptoError::DecryptionFailed)
 }
 
-
 /// Encrypts the user's X25519 private key using a key derived from
 /// their password with Argon2id.
 ///
@@ -422,22 +327,15 @@ pub fn decrypt_vault_key(
 ///     encrypted private key + Poly1305 tag
 pub fn encrypt_private_key(
     master_key: &[u8; KEY_SIZE],
-    user_id: &[u8],
     private_key: &[u8; KEY_SIZE],
 ) -> Result<Vec<u8>, CryptoError> {
     let cipher =
-        XChaCha20Poly1305::new_from_slice(master_key)
-            .map_err(|_| CryptoError::InvalidKey)?;
+        XChaCha20Poly1305::new_from_slice(master_key).map_err(|_| CryptoError::InvalidKey)?;
 
     let nonce_bytes = generate_nonce()?;
     let nonce = XNonce::from(nonce_bytes);
 
-    let aad = build_aad(
-        PROTOCOL_VERSION,
-        PRIVATE_KEY_TYPE,
-        &[],
-        user_id,
-    );
+    let aad = build_aad(PROTOCOL_VERSION, PRIVATE_KEY_TYPE, &[], None);
 
     let encrypted = cipher
         .encrypt(
@@ -449,9 +347,7 @@ pub fn encrypt_private_key(
         )
         .map_err(|_| CryptoError::EncryptionFailed)?;
 
-    let mut output = Vec::with_capacity(
-        1 + NONCE_SIZE + encrypted.len(),
-    );
+    let mut output = Vec::with_capacity(1 + NONCE_SIZE + encrypted.len());
 
     output.push(PROTOCOL_VERSION);
     output.extend_from_slice(&nonce_bytes);
@@ -460,12 +356,10 @@ pub fn encrypt_private_key(
     Ok(output)
 }
 
-
 /// Decrypts the user's X25519 private key using the key derived
 /// from their password.
 pub fn decrypt_private_key(
     master_key: &[u8; KEY_SIZE],
-    user_id: &[u8],
     encrypted: &[u8],
 ) -> Result<[u8; KEY_SIZE], CryptoError> {
     if encrypted.len() < MIN_PRIVATE_KEY_SIZE {
@@ -478,10 +372,7 @@ pub fn decrypt_private_key(
         return Err(CryptoError::UnsupportedVersion);
     }
 
-    let nonce_bytes =
-        <[u8; NONCE_SIZE]>::try_from(
-            &encrypted[1..25],
-        )
+    let nonce_bytes = <[u8; NONCE_SIZE]>::try_from(&encrypted[1..25])
         .map_err(|_| CryptoError::DecryptionFailed)?;
 
     let ciphertext = &encrypted[25..];
@@ -489,15 +380,9 @@ pub fn decrypt_private_key(
     let nonce = XNonce::from(nonce_bytes);
 
     let cipher =
-        XChaCha20Poly1305::new_from_slice(master_key)
-            .map_err(|_| CryptoError::InvalidKey)?;
+        XChaCha20Poly1305::new_from_slice(master_key).map_err(|_| CryptoError::InvalidKey)?;
 
-    let aad = build_aad(
-        version,
-        PRIVATE_KEY_TYPE,
-        &[],
-        user_id,
-    );
+    let aad = build_aad(version, PRIVATE_KEY_TYPE, &[], None);
 
     let plaintext = cipher
         .decrypt(

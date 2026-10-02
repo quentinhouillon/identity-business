@@ -1,6 +1,7 @@
 /target
 /pkg/
 /dist/
+/test/
 
 .DS_Store
 Thumbs.db
@@ -10,10 +11,6 @@ Thumbs.db
 *.wasm.map
 
 .vscode/
-
-.DS_Store
-Thumbs.db
-
 
 *.tmp
 *.temp
