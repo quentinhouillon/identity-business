@@ -1,6 +1,6 @@
 use argon2::{Algorithm, Argon2, Params, Version};
 use hkdf::Hkdf;
-use rand::{rngs::SysRng, TryRng};
+use rand::{TryRng, rngs::SysRng};
 use sha2::Sha256;
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -10,7 +10,11 @@ pub const PROTOCOL_NAME: &[u8] = b"MYAPP-VAULT";
 pub const PROTOCOL_VERSION: u8 = 1;
 
 pub const KEY_SIZE: usize = 32;
-pub const SALT_SIZE: usize = 16;
+pub const SALT_SIZE: usize = 32;
+
+const ARGON2_MEMORY_KIB: u32 = 128 * 1024;
+const ARGON2_ITERATIONS: u32 = 4;
+const ARGON2_LANES: u32 = 2;
 
 const X25519_WRAP_CONTEXT: &[u8] = b"x25519-vault-key-wrap";
 
@@ -18,36 +22,25 @@ const X25519_WRAP_CONTEXT: &[u8] = b"x25519-vault-key-wrap";
 ///
 /// This key must only be used to protect the user's X25519 private key.
 /// The password itself must never be used directly as an encryption key.
-pub fn derive_master_key(
-    master_password: &[u8],
-    salt: &[u8],
-) -> Result<[u8; 32], CryptoError> {
+pub fn derive_master_key(master_password: &[u8], salt: &[u8]) -> Result<[u8; 32], CryptoError> {
     if salt.len() < SALT_SIZE {
         return Err(CryptoError::InvalidSalt);
     }
 
     let params = Params::new(
-        64 * 1024, // 64 MiB memory
-        3,         // 3 iterations
-        1,         // 1 lane
+        ARGON2_MEMORY_KIB,
+        ARGON2_ITERATIONS,
+        ARGON2_LANES,
         Some(KEY_SIZE),
     )
     .map_err(|_| CryptoError::KeyDerivationFailed)?;
 
-    let argon2 = Argon2::new(
-        Algorithm::Argon2id,
-        Version::V0x13,
-        params,
-    );
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
     let mut master_key = [0u8; KEY_SIZE];
 
     argon2
-        .hash_password_into(
-            master_password,
-            salt,
-            &mut master_key,
-        )
+        .hash_password_into(master_password, salt, &mut master_key)
         .map_err(|_| CryptoError::KeyDerivationFailed)?;
 
     Ok(master_key)
@@ -70,8 +63,7 @@ pub fn generate_vault_key() -> Result<[u8; KEY_SIZE], CryptoError> {
 ///
 /// The private key must remain client-side.
 /// Only the public key should be sent to the backend.
-pub fn generate_asymmetric_keypair(
-) -> Result<([u8; KEY_SIZE], [u8; KEY_SIZE]), CryptoError> {
+pub fn generate_asymmetric_keypair() -> Result<([u8; KEY_SIZE], [u8; KEY_SIZE]), CryptoError> {
     let mut private_bytes = [0u8; KEY_SIZE];
 
     SysRng
@@ -81,10 +73,7 @@ pub fn generate_asymmetric_keypair(
     let private_key = StaticSecret::from(private_bytes);
     let public_key = PublicKey::from(&private_key);
 
-    Ok((
-        private_key.to_bytes(),
-        public_key.to_bytes(),
-    ))
+    Ok((private_key.to_bytes(), public_key.to_bytes()))
 }
 
 /// Derives an AEAD key from an X25519 shared secret.
@@ -101,20 +90,12 @@ pub fn derive_x25519_aead_key(
         return Err(CryptoError::KeyDerivationFailed);
     }
 
-    let hkdf = Hkdf::<Sha256>::new(
-        Some(PROTOCOL_NAME),
-        shared_secret,
-    );
+    let hkdf = Hkdf::<Sha256>::new(Some(PROTOCOL_NAME), shared_secret);
 
     let mut key = [0u8; KEY_SIZE];
 
-    let mut info = Vec::with_capacity(
-        X25519_WRAP_CONTEXT.len()
-            + 1
-            + 1
-            + vault_id.len()
-            + user_id.len(),
-    );
+    let mut info =
+        Vec::with_capacity(X25519_WRAP_CONTEXT.len() + 1 + 1 + vault_id.len() + user_id.len());
 
     info.extend_from_slice(X25519_WRAP_CONTEXT);
 
@@ -128,8 +109,7 @@ pub fn derive_x25519_aead_key(
     info.extend_from_slice(vault_id);
     info.extend_from_slice(user_id);
 
-    hkdf
-        .expand(&info, &mut key)
+    hkdf.expand(&info, &mut key)
         .map_err(|_| CryptoError::KeyDerivationFailed)?;
 
     Ok(key)

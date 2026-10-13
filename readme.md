@@ -62,15 +62,15 @@ Rules:
 
 The main cryptographic sizes are:
 
-| Value | Size |
-|---|---:|
-| Symmetric key | 32 bytes |
-| X25519 private key | 32 bytes |
-| X25519 public key | 32 bytes |
-| XChaCha20 nonce | 24 bytes |
-| Poly1305 authentication tag | 16 bytes |
-| Argon2id output | 32 bytes |
-| Password salt | 16 bytes or more |
+| Value                       |             Size |
+| --------------------------- | ---------------: |
+| Symmetric key               |         32 bytes |
+| X25519 private key          |         32 bytes |
+| X25519 public key           |         32 bytes |
+| XChaCha20 nonce             |         24 bytes |
+| Poly1305 authentication tag |         16 bytes |
+| Argon2id output             |         32 bytes |
+| Password salt               | 16 bytes or more |
 
 Base64 encoding does not change the underlying binary size requirements.
 
@@ -83,16 +83,13 @@ Base64 encoding does not change the underlying binary size requirements.
 Checks passwords against the Have I Been Pwned service.
 
 ```typescript
-const results = await check_passwords_wasm([
-  "password123",
-  "my-password",
-]);
+const results = await check_passwords_wasm(["password123", "my-password"]);
 ```
 
 ### Parameters
 
-| Parameter | Type | Description |
-|---|---|---|
+| Parameter   | Type       | Description        |
+| ----------- | ---------- | ------------------ |
 | `passwords` | `string[]` | Passwords to check |
 
 ### Returns
@@ -112,18 +109,15 @@ Returns the results from the password breach check.
 Runs a Depth-First Search (DFS) on a graph.
 
 ```typescript
-const visited = dfs_wasm(
-  JSON.stringify(edges),
-  startId
-);
+const visited = dfs_wasm(JSON.stringify(edges), startId);
 ```
 
 ### Parameters
 
-| Parameter | Type | Description |
-|---|---|---|
+| Parameter   | Type     | Description                 |
+| ----------- | -------- | --------------------------- |
 | `edgesJson` | `string` | Graph edges encoded as JSON |
-| `startId` | `string` | Starting node UUID |
+| `startId`   | `string` | Starting node UUID          |
 
 ### Returns
 
@@ -140,18 +134,15 @@ A set containing the visited node IDs.
 Finds Single Points of Failure (SPOF) in a graph.
 
 ```typescript
-const spofs = spof_wasm(
-  JSON.stringify(edges),
-  startId
-);
+const spofs = spof_wasm(JSON.stringify(edges), startId);
 ```
 
 ### Parameters
 
-| Parameter | Type | Description |
-|---|---|---|
+| Parameter   | Type     | Description                 |
+| ----------- | -------- | --------------------------- |
 | `edgesJson` | `string` | Graph edges encoded as JSON |
-| `startId` | `string` | Starting node UUID |
+| `startId`   | `string` | Starting node UUID          |
 
 ### Returns
 
@@ -195,32 +186,32 @@ const encrypted = encrypt_wasm(
   messageType,
   vaultId,
   objectId,
-  plaintextBase64
+  plaintextBase64,
 );
 ```
 
 ### Parameters
 
-| Parameter | Type | Description |
-|---|---|---|
-| `key` | `string` | Base64-encoded 32-byte encryption key |
-| `messageType` | `number` | Protocol message type |
-| `vaultId` | `string` | Vault UUID |
-| `objectId` | `string` | Object UUID |
-| `value` | `string` | Base64-encoded plaintext |
+| Parameter     | Type     | Description                           |
+| ------------- | -------- | ------------------------------------- |
+| `key`         | `string` | Base64-encoded 32-byte encryption key |
+| `messageType` | `number` | Protocol message type                 |
+| `vaultId`     | `string` | Vault UUID                            |
+| `objectId`    | `string` | Object UUID                           |
+| `value`       | `string` | Base64-encoded plaintext              |
 
 ### Message Types
 
 The current protocol defines:
 
-| Constant | Value | Usage |
-|---|---:|---|
-| `TYPE_VAULT_KEY_WRAP` | `0x01` | Vault key wrapping |
-| `TYPE_NODE` | `0x02` | Node data |
-| `TYPE_EDGE` | `0x03` | Edge data |
-| `TYPE_HISTORY` | `0x04` | History data |
+| Constant              |  Value | Usage               |
+| --------------------- | -----: | ------------------- |
+| `TYPE_VAULT_KEY_WRAP` | `0x01` | Vault key wrapping  |
+| `TYPE_NODE`           | `0x02` | Node data           |
+| `TYPE_EDGE`           | `0x03` | Edge data           |
+| `TYPE_HISTORY`        | `0x04` | History data        |
 | `TYPE_SECURITY_EVENT` | `0x05` | Security event data |
-| `PRIVATE_KEY_TYPE` | `0x06` | User private key |
+| `PRIVATE_KEY_TYPE`    | `0x06` | User private key    |
 
 `TYPE_VAULT_KEY_WRAP` and `PRIVATE_KEY_TYPE` must not be passed to `encrypt_wasm`. They have dedicated APIs.
 
@@ -255,19 +246,19 @@ const decryptedBase64 = decrypt_wasm(
   messageType,
   vaultId,
   objectId,
-  encryptedBase64
+  encryptedBase64,
 );
 ```
 
 ### Parameters
 
-| Parameter | Type | Description |
-|---|---|---|
-| `key` | `string` | Base64-encoded 32-byte encryption key |
-| `messageType` | `number` | Expected protocol message type |
-| `vaultId` | `string` | Vault UUID |
-| `objectId` | `string` | Object UUID |
-| `value` | `string` | Base64-encoded ciphertext |
+| Parameter     | Type     | Description                           |
+| ------------- | -------- | ------------------------------------- |
+| `key`         | `string` | Base64-encoded 32-byte encryption key |
+| `messageType` | `number` | Expected protocol message type        |
+| `vaultId`     | `string` | Vault UUID                            |
+| `objectId`    | `string` | Object UUID                           |
+| `value`       | `string` | Base64-encoded ciphertext             |
 
 ### Returns
 
@@ -322,18 +313,15 @@ For example, a ciphertext encrypted as a `TYPE_NODE` cannot be successfully decr
 Derives a 32-byte master key from a password using Argon2id.
 
 ```typescript
-const masterKeyBase64 = derive_master_key_wasm(
-  passwordBase64,
-  saltBase64
-);
+const masterKeyBase64 = derive_master_key_wasm(passwordBase64, saltBase64);
 ```
 
 ### Parameters
 
-| Parameter | Type | Description |
-|---|---|---|
+| Parameter        | Type     | Description                   |
+| ---------------- | -------- | ----------------------------- |
 | `masterPassword` | `string` | Base64-encoded password bytes |
-| `salt` | `string` | Base64-encoded random salt |
+| `salt`           | `string` | Base64-encoded random salt    |
 
 ### Returns
 
@@ -347,13 +335,15 @@ The current Argon2id configuration is:
 
 ```text
 Algorithm:  Argon2id
-Memory:     64 MiB
-Iterations: 3
-Lanes:      1
+Memory:     128 MiB
+Iterations: 4
+Lanes:      2
 Output:     32 bytes
 ```
 
-The salt is not secret and may be stored alongside the encrypted private key.
+The salt must contain at least 32 random bytes. It is not secret and may be stored alongside the encrypted private key.
+
+The 32-byte output is intentional: XChaCha20-Poly1305 and X25519 use fixed 32-byte keys. Increasing the output size would not strengthen those primitives and would require a different protocol.
 
 The master key is intended to protect the user's X25519 private key. It is not the Vault key.
 
@@ -435,18 +425,18 @@ const encryptedVaultKey = encrypt_vault_key_wasm(
   recipientPublicKey,
   vaultId,
   userId,
-  vaultKey
+  vaultKey,
 );
 ```
 
 ### Parameters
 
-| Parameter | Type | Description |
-|---|---|---|
+| Parameter            | Type     | Description                              |
+| -------------------- | -------- | ---------------------------------------- |
 | `recipientPublicKey` | `string` | Base64-encoded 32-byte X25519 public key |
-| `vaultId` | `string` | Vault UUID |
-| `userId` | `string` | Recipient user UUID |
-| `vaultKey` | `string` | Base64-encoded 32-byte Vault key |
+| `vaultId`            | `string` | Vault UUID                               |
+| `userId`             | `string` | Recipient user UUID                      |
+| `vaultKey`           | `string` | Base64-encoded 32-byte Vault key         |
 
 Internally:
 
@@ -510,18 +500,18 @@ const vaultKey = decrypt_vault_key_wasm(
   privateKey,
   vaultId,
   userId,
-  encryptedVaultKey
+  encryptedVaultKey,
 );
 ```
 
 ### Parameters
 
-| Parameter | Type | Description |
-|---|---|---|
-| `privateKey` | `string` | Base64-encoded 32-byte X25519 private key |
-| `vaultId` | `string` | Vault UUID |
-| `userId` | `string` | User UUID |
-| `encryptedVaultKey` | `string` | Base64-encoded wrapped Vault key |
+| Parameter           | Type     | Description                               |
+| ------------------- | -------- | ----------------------------------------- |
+| `privateKey`        | `string` | Base64-encoded 32-byte X25519 private key |
+| `vaultId`           | `string` | Vault UUID                                |
+| `userId`            | `string` | User UUID                                 |
+| `encryptedVaultKey` | `string` | Base64-encoded wrapped Vault key          |
 
 ### Returns
 
@@ -563,16 +553,16 @@ Encrypts the user's X25519 private key.
 const encryptedPrivateKey = encrypt_private_key_wasm(
   masterKey,
   userId,
-  privateKey
+  privateKey,
 );
 ```
 
 ### Parameters
 
-| Parameter | Type | Description |
-|---|---|---|
-| `masterKey` | `string` | Base64-encoded 32-byte master key |
-| `userId` | `string` | User UUID |
+| Parameter    | Type     | Description                               |
+| ------------ | -------- | ----------------------------------------- |
+| `masterKey`  | `string` | Base64-encoded 32-byte master key         |
+| `userId`     | `string` | User UUID                                 |
 | `privateKey` | `string` | Base64-encoded 32-byte X25519 private key |
 
 ### Returns
@@ -604,16 +594,16 @@ Decrypts the user's X25519 private key.
 const privateKey = decrypt_private_key_wasm(
   masterKey,
   userId,
-  encryptedPrivateKey
+  encryptedPrivateKey,
 );
 ```
 
 ### Parameters
 
-| Parameter | Type | Description |
-|---|---|---|
-| `masterKey` | `string` | Base64-encoded 32-byte master key |
-| `userId` | `string` | User UUID |
+| Parameter             | Type     | Description                          |
+| --------------------- | -------- | ------------------------------------ |
+| `masterKey`           | `string` | Base64-encoded 32-byte master key    |
+| `userId`              | `string` | User UUID                            |
 | `encryptedPrivateKey` | `string` | Base64-encoded encrypted private key |
 
 ### Returns
@@ -633,18 +623,15 @@ A Base64-encoded 32-byte X25519 private key.
 Generates a TOTP code for a node.
 
 ```typescript
-const code = get_totp_code(
-  node,
-  Math.floor(Date.now() / 1000)
-);
+const code = get_totp_code(node, Math.floor(Date.now() / 1000));
 ```
 
 ### Parameters
 
-| Parameter | Type | Description |
-|---|---|---|
-| `node` | `Node` | Node containing the TOTP configuration |
-| `timestamp` | `number` | Unix timestamp in seconds |
+| Parameter   | Type     | Description                            |
+| ----------- | -------- | -------------------------------------- |
+| `node`      | `Node`   | Node containing the TOTP configuration |
+| `timestamp` | `number` | Unix timestamp in seconds              |
 
 ### Returns
 
@@ -663,21 +650,16 @@ The generated TOTP code.
 Exports Vault data using the project's JSON export implementation.
 
 ```typescript
-const data = export_json(
-  vault,
-  nodes,
-  edges,
-  history
-);
+const data = export_json(vault, nodes, edges, history);
 ```
 
 ### Parameters
 
-| Parameter | Type | Description |
-|---|---|---|
-| `vault` | `Vault` | Vault object |
-| `nodes` | `Node[]` | Vault nodes |
-| `edges` | `Edge[]` | Vault edges |
+| Parameter | Type        | Description   |
+| --------- | ----------- | ------------- |
+| `vault`   | `Vault`     | Vault object  |
+| `nodes`   | `Node[]`    | Vault nodes   |
+| `edges`   | `Edge[]`    | Vault edges   |
 | `history` | `History[]` | Vault history |
 
 ### Returns
@@ -695,16 +677,14 @@ A Base64-encoded export payload.
 Imports a previously exported JSON payload.
 
 ```typescript
-const bundle = import_json(
-  dataBase64
-);
+const bundle = import_json(dataBase64);
 ```
 
 ### Parameters
 
-| Parameter | Type | Description |
-|---|---|---|
-| `data` | `string` | Base64-encoded export data |
+| Parameter | Type     | Description                |
+| --------- | -------- | -------------------------- |
+| `data`    | `string` | Base64-encoded export data |
 
 ### Returns
 
@@ -828,7 +808,7 @@ ciphertext
 - Never send the Vault key to Django in plaintext.
 - Never send the X25519 private key to Django in plaintext.
 - Encrypt the X25519 private key before storing it.
-- Use a unique random salt for each user's password-derived key.
+- Use a unique random 32-byte salt for each user's password-derived key.
 - Keep the Vault key client-side whenever possible.
 - Treat ciphertext as untrusted input and always verify authentication before using plaintext.
 - Bind ciphertexts to their Vault and object identifiers through AAD.
