@@ -3,6 +3,11 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use uuid::Uuid;
 use wasm_bindgen::JsValue;
 
+
+pub fn js_error(error: impl ToString) -> JsValue {
+    JsValue::from_str(&error.to_string())
+}
+
 pub fn decode_key(value: &str) -> Result<[u8; 32], JsValue> {
     STANDARD
         .decode(value)
