@@ -2,7 +2,10 @@ pub mod helper;
 
 use std::collections::HashSet;
 
-use helper::{decode_base64, decode_key, decode_uuid, encode_base64, js_error};
+use helper::{
+    crypto_error, decode_base64, decode_key, decode_signature, decode_uuid, encode_base64,
+    encode_uuid, js_error,
+};
 
 use project_core::import_export::json::{
     export_json as core_export_json,
@@ -16,17 +19,9 @@ use project_core::{
     crypto::{crypto, key, totp},
     models::{Edge, History, Node, Vault},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use wasm_bindgen::prelude::*;
-
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct KeyPairOut {
-    private_key: String,
-    public_key: String,
-}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +38,24 @@ struct KdfParamsOut {
     lanes: u32,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicIdentityOut {
+    user_id: String,
+    x25519_public: String,
+    ed25519_public: String,
+    signature: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicIdentityIn {
+    user_id: String,
+    x25519_public: String,
+    ed25519_public: String,
+    signature: String,
+}
+
 fn account_keys_to_js(keys: &key::AccountKeys) -> Result<JsValue, JsValue> {
     let out = AccountKeysOut {
         enc_key: encode_base64(&keys.enc_key[..]),
@@ -52,8 +65,30 @@ fn account_keys_to_js(keys: &key::AccountKeys) -> Result<JsValue, JsValue> {
     serde_wasm_bindgen::to_value(&out).map_err(js_error)
 }
 
+fn read_public_identity(value: JsValue) -> Result<key::PublicIdentity, JsValue> {
+    let input: PublicIdentityIn = serde_wasm_bindgen::from_value(value).map_err(js_error)?;
+
+    Ok(key::PublicIdentity {
+        user_id: decode_uuid(&input.user_id, "user_id")?.to_vec(),
+        x25519_public: decode_key(&input.x25519_public)?,
+        ed25519_public: decode_key(&input.ed25519_public)?,
+        signature: decode_signature(&input.signature)?,
+    })
+}
+
+fn public_identity_to_js(identity: &key::PublicIdentity) -> Result<JsValue, JsValue> {
+    let out = PublicIdentityOut {
+        user_id: encode_uuid(&identity.user_id)?,
+        x25519_public: encode_base64(&identity.x25519_public),
+        ed25519_public: encode_base64(&identity.ed25519_public),
+        signature: encode_base64(&identity.signature),
+    };
+
+    serde_wasm_bindgen::to_value(&out).map_err(js_error)
+}
+
 /* -------------------------------------------------------------------------- */
-/* Password breach check                                                      */
+/* Password breach check                                                     */
 /* -------------------------------------------------------------------------- */
 
 #[wasm_bindgen]
@@ -68,7 +103,7 @@ pub async fn check_passwords_wasm(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Graph algorithms                                                           */
+/* Graph algorithms                                                          */
 /* -------------------------------------------------------------------------- */
 
 #[wasm_bindgen]
@@ -103,7 +138,7 @@ pub fn spof_wasm(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Generic Vault data encryption                                               */
+/* Vault data encryption                                                      */
 /* -------------------------------------------------------------------------- */
 
 #[wasm_bindgen]
@@ -119,14 +154,8 @@ pub fn encrypt_wasm(
     let object_id = decode_uuid(object_id, "object_id")?;
     let plaintext = decode_base64(value)?;
 
-    let encrypted = crypto::encrypt_data(
-        &key,
-        message_type,
-        &vault_id,
-        &object_id,
-        &plaintext,
-    )
-    .map_err(js_error)?;
+    let encrypted = crypto::encrypt_data(&key, message_type, &vault_id, &object_id, &plaintext)
+        .map_err(crypto_error)?;
 
     Ok(encode_base64(&encrypted))
 }
@@ -144,31 +173,23 @@ pub fn decrypt_wasm(
     let object_id = decode_uuid(object_id, "object_id")?;
     let encrypted = decode_base64(value)?;
 
-    let plaintext = crypto::decrypt_data(
-        &key,
-        message_type,
-        &vault_id,
-        &object_id,
-        &encrypted,
-    )
-    .map_err(js_error)?;
+    let plaintext = crypto::decrypt_data(&key, message_type, &vault_id, &object_id, &encrypted)
+        .map_err(crypto_error)?;
 
     Ok(encode_base64(&plaintext))
 }
 
 /* -------------------------------------------------------------------------- */
-/* Account keys (password -> enc_key + auth_key)                               */
+/* Account keys (password -> enc_key + auth_key)                              */
 /* -------------------------------------------------------------------------- */
 
-/// Salt aléatoire (inscription et changement de mot de passe).
 #[wasm_bindgen]
 pub fn generate_salt_wasm() -> Result<String, JsValue> {
-    let salt = key::generate_salt().map_err(js_error)?;
+    let salt = key::generate_salt().map_err(crypto_error)?;
 
     Ok(encode_base64(&salt))
 }
 
-/// Paramètres Argon2 par défaut, pour l'inscription.
 #[wasm_bindgen]
 pub fn default_kdf_params_wasm() -> Result<JsValue, JsValue> {
     let kdf = key::KdfParams::default();
@@ -181,13 +202,9 @@ pub fn default_kdf_params_wasm() -> Result<JsValue, JsValue> {
     .map_err(js_error)
 }
 
-/// Mot de passe + salt + paramètres de /prelogin -> { encKey, authKey }.
-///
-/// - `master_password` : texte brut (normalisez-le en NFKC côté JS avant l'appel).
-/// - `salt`            : base64, tel que renvoyé par /prelogin.
-/// - `encKey` reste dans le client, `authKey` part vers /login ou /register.
-///
-/// Argon2 est lourd : appelez cette fonction depuis un Web Worker.
+/// Password + salt + /prelogin parameters -> { encKey, authKey }.
+/// Normalize the password to NFKC in JS first. Argon2 is heavy: call this from
+/// a Web Worker.
 #[wasm_bindgen]
 pub fn derive_account_keys_wasm(
     master_password: &str,
@@ -205,150 +222,255 @@ pub fn derive_account_keys_wasm(
     };
 
     let keys = key::derive_account_keys(master_password.as_bytes(), &salt, kdf)
-        .map_err(js_error)?;
+        .map_err(crypto_error)?;
 
     account_keys_to_js(&keys)
 }
 
 /* -------------------------------------------------------------------------- */
-/* Recovery key                                                                */
+/* Recovery key                                                               */
 /* -------------------------------------------------------------------------- */
 
-/// Clé de récupération (256 bits), à afficher une seule fois.
 #[wasm_bindgen]
 pub fn generate_recovery_key_wasm() -> Result<String, JsValue> {
-    let recovery_key = key::generate_recovery_key().map_err(js_error)?;
+    let recovery_key = key::generate_recovery_key().map_err(crypto_error)?;
 
     Ok(encode_base64(&recovery_key[..]))
 }
 
 /// recovery_key -> { encKey, authKey }
-/// (authKey = `recovery_auth_key` envoyé au serveur, encKey chiffre la copie
-/// de secours de la clé privée).
 #[wasm_bindgen]
 pub fn derive_recovery_keys_wasm(recovery_key: &str) -> Result<JsValue, JsValue> {
     let recovery_key = decode_key(recovery_key)?;
 
-    let keys = key::derive_recovery_keys(&recovery_key).map_err(js_error)?;
+    let keys = key::derive_recovery_keys(&recovery_key).map_err(crypto_error)?;
 
     account_keys_to_js(&keys)
 }
 
 /* -------------------------------------------------------------------------- */
-/* Vault key                                                                   */
+/* Vault key                                                                  */
 /* -------------------------------------------------------------------------- */
 
 #[wasm_bindgen]
 pub fn generate_vault_key_wasm() -> Result<String, JsValue> {
-    let vault_key = key::generate_vault_key().map_err(js_error)?;
+    let vault_key = key::generate_vault_key().map_err(crypto_error)?;
 
-    Ok(encode_base64(&vault_key))
+    Ok(encode_base64(&vault_key[..]))
 }
 
 /* -------------------------------------------------------------------------- */
-/* X25519 key pair                                                             */
+/* Identity (X25519 + Ed25519)                                                */
 /* -------------------------------------------------------------------------- */
 
+/// Handle to the private identity. Secrets stay inside WASM memory.
+/// Call `.free()` from JS when done to wipe them.
 #[wasm_bindgen]
-pub fn generate_asymmetric_keypair_wasm() -> Result<JsValue, JsValue> {
-    let (private_key, public_key) =
-        key::generate_asymmetric_keypair().map_err(js_error)?;
-
-    let out = KeyPairOut {
-        private_key: encode_base64(&private_key),
-        public_key: encode_base64(&public_key),
-    };
-
-    serde_wasm_bindgen::to_value(&out).map_err(js_error)
+pub struct Identity {
+    inner: key::IdentityKeys,
 }
 
-/* -------------------------------------------------------------------------- */
-/* Vault key wrapping                                                          */
-/* -------------------------------------------------------------------------- */
+#[wasm_bindgen]
+impl Identity {
+    pub fn x25519_public(&self) -> String {
+        encode_base64(&self.inner.x25519_public)
+    }
+
+    pub fn ed25519_public(&self) -> String {
+        encode_base64(&self.inner.ed25519_public)
+    }
+
+    /// Signed binding { userId, x25519Public, ed25519Public, signature }
+    /// to send to the server at registration.
+    pub fn public_identity(&self, user_id: &str) -> Result<JsValue, JsValue> {
+        let user_id = decode_uuid(user_id, "user_id")?;
+
+        let public =
+            key::PublicIdentity::sign(&self.inner, &user_id).map_err(crypto_error)?;
+
+        public_identity_to_js(&public)
+    }
+}
+
+/// A peer identity that passed `verify_peer_identity_wasm`.
+#[wasm_bindgen]
+pub struct PeerIdentity {
+    inner: key::VerifiedIdentity,
+    status: key::TrustStatus,
+}
 
 #[wasm_bindgen]
-pub fn encrypt_vault_key_wasm(
-    recipient_public_key: &str,
-    vault_id: &str,
+impl PeerIdentity {
+    pub fn user_id(&self) -> Result<String, JsValue> {
+        encode_uuid(self.inner.user_id())
+    }
+
+    pub fn x25519_public(&self) -> String {
+        encode_base64(self.inner.x25519_public())
+    }
+
+    /// Store this value to pin the peer.
+    pub fn ed25519_public(&self) -> String {
+        encode_base64(self.inner.ed25519_public())
+    }
+
+    /// "pinned" or "first_use".
+    pub fn status(&self) -> String {
+        match self.status {
+            key::TrustStatus::Pinned => "pinned".to_string(),
+            key::TrustStatus::FirstUse => "first_use".to_string(),
+        }
+    }
+}
+
+#[wasm_bindgen]
+pub fn generate_identity_wasm() -> Result<Identity, JsValue> {
+    let inner = key::IdentityKeys::generate().map_err(crypto_error)?;
+
+    Ok(Identity { inner })
+}
+
+/// Encrypts the private keys with `enc_key` (password or recovery).
+#[wasm_bindgen]
+pub fn encrypt_identity_wasm(
+    identity: &Identity,
+    enc_key: &str,
     user_id: &str,
-    vault_key: &str,
 ) -> Result<String, JsValue> {
-    let recipient_public_key = decode_key(recipient_public_key)?;
-    let vault_id = decode_uuid(vault_id, "vault_id")?;
+    let enc_key = decode_key(enc_key)?;
     let user_id = decode_uuid(user_id, "user_id")?;
-    let vault_key = decode_key(vault_key)?;
 
-    let encrypted = crypto::encrypt_vault_key(
-        &recipient_public_key,
-        &vault_id,
-        &user_id,
-        &vault_key,
-    )
-    .map_err(js_error)?;
+    let encrypted = crypto::encrypt_identity(&enc_key, &identity.inner, &user_id)
+        .map_err(crypto_error)?;
 
     Ok(encode_base64(&encrypted))
+}
+
+/// `own_identity` must come from local storage, not from a fresh server reply.
+/// Expected shape: { userId, x25519Public, ed25519Public, signature }.
+#[wasm_bindgen]
+pub fn decrypt_identity_wasm(
+    enc_key: &str,
+    own_identity: JsValue,
+    encrypted_identity: &str,
+) -> Result<Identity, JsValue> {
+    let enc_key = decode_key(enc_key)?;
+    let own_identity = read_public_identity(own_identity)?;
+    let encrypted = decode_base64(encrypted_identity)?;
+
+    let inner = crypto::decrypt_identity(&enc_key, &own_identity, &encrypted)
+        .map_err(crypto_error)?;
+
+    Ok(Identity { inner })
+}
+
+/// Verifies a public identity received from the server.
+/// Throws IDENTITY_MISMATCH, INVALID_SIGNATURE or IDENTITY_KEY_CHANGED.
+#[wasm_bindgen]
+pub fn verify_peer_identity_wasm(
+    received: JsValue,
+    expected_user_id: &str,
+    pinned_ed25519: Option<String>,
+) -> Result<PeerIdentity, JsValue> {
+    let received = read_public_identity(received)?;
+    let expected_user_id = decode_uuid(expected_user_id, "user_id")?;
+    let pinned = pinned_ed25519.as_deref().map(decode_key).transpose()?;
+
+    let (inner, status) =
+        key::verify_peer_identity(&received, &expected_user_id, pinned.as_ref())
+            .map_err(crypto_error)?;
+
+    Ok(PeerIdentity { inner, status })
+}
+
+/// Own identity as a verified peer, needed to wrap a Vault key for yourself.
+#[wasm_bindgen]
+pub fn self_peer_wasm(identity: &Identity, user_id: &str) -> Result<PeerIdentity, JsValue> {
+    let user_id = decode_uuid(user_id, "user_id")?;
+
+    let public = key::PublicIdentity::sign(&identity.inner, &user_id).map_err(crypto_error)?;
+
+    let (inner, status) = key::verify_peer_identity(
+        &public,
+        &user_id,
+        Some(&identity.inner.ed25519_public),
+    )
+    .map_err(crypto_error)?;
+
+    Ok(PeerIdentity { inner, status })
+}
+
+/// Fingerprint to compare out of band.
+#[wasm_bindgen]
+pub fn fingerprint_wasm(public_identity: JsValue) -> Result<String, JsValue> {
+    let public = read_public_identity(public_identity)?;
+
+    public.fingerprint().map_err(crypto_error)
+}
+
+/* -------------------------------------------------------------------------- */
+/* Vault key sharing                                                          */
+/* -------------------------------------------------------------------------- */
+
+/// Returns the Base64 blob to store next to vault_id, sender_id and recipient_id.
+#[wasm_bindgen]
+pub fn encrypt_vault_key_wasm(
+    sender: &Identity,
+    sender_id: &str,
+    recipient: &PeerIdentity,
+    vault_id: &str,
+    vault_key: &str,
+) -> Result<String, JsValue> {
+    let sender_id = decode_uuid(sender_id, "sender_id")?;
+    let vault_id = decode_uuid(vault_id, "vault_id")?;
+    let vault_key = decode_key(vault_key)?;
+
+    let wrapped = crypto::encrypt_vault_key(
+        &sender.inner,
+        &sender_id,
+        &recipient.inner,
+        &vault_id,
+        &vault_key,
+    )
+    .map_err(crypto_error)?;
+
+    Ok(encode_base64(&wrapped.to_bytes()))
 }
 
 #[wasm_bindgen]
 pub fn decrypt_vault_key_wasm(
-    private_key: &str,
+    recipient: &Identity,
+    recipient_id: &str,
+    sender: &PeerIdentity,
     vault_id: &str,
-    user_id: &str,
-    encrypted_vault_key: &str,
+    wrapped_vault_key: &str,
 ) -> Result<String, JsValue> {
-    let private_key = decode_key(private_key)?;
+    let recipient_id = decode_uuid(recipient_id, "recipient_id")?;
     let vault_id = decode_uuid(vault_id, "vault_id")?;
-    let user_id = decode_uuid(user_id, "user_id")?;
-    let encrypted_vault_key = decode_base64(encrypted_vault_key)?;
+    let bytes = decode_base64(wrapped_vault_key)?;
+
+    let wrapped = crypto::WrappedVaultKey::from_bytes(
+        &vault_id,
+        sender.inner.user_id(),
+        &recipient_id,
+        &bytes,
+    )
+    .map_err(crypto_error)?;
 
     let vault_key = crypto::decrypt_vault_key(
-        &private_key,
+        &recipient.inner,
+        &recipient_id,
+        &sender.inner,
+        &wrapped,
         &vault_id,
-        &user_id,
-        &encrypted_vault_key,
     )
-    .map_err(js_error)?;
+    .map_err(crypto_error)?;
 
-    Ok(encode_base64(&vault_key))
+    Ok(encode_base64(&vault_key[..]))
 }
 
 /* -------------------------------------------------------------------------- */
-/* Private key encryption                                                     */
-/* -------------------------------------------------------------------------- */
-
-/// `enc_key` = `encKey` de derive_account_keys_wasm (mot de passe),
-/// ou `encKey` de derive_recovery_keys_wasm (copie de secours).
-#[wasm_bindgen]
-pub fn encrypt_private_key_wasm(
-    enc_key: &str,
-    private_key: &str,
-) -> Result<String, JsValue> {
-    let enc_key = decode_key(enc_key)?;
-    let private_key = decode_key(private_key)?;
-
-    let encrypted =
-        crypto::encrypt_private_key(&enc_key, &private_key).map_err(js_error)?;
-
-    Ok(encode_base64(&encrypted))
-}
-
-#[wasm_bindgen]
-pub fn decrypt_private_key_wasm(
-    enc_key: &str,
-    encrypted_private_key: &str,
-) -> Result<String, JsValue> {
-    let enc_key = decode_key(enc_key)?;
-    let encrypted_private_key = decode_base64(encrypted_private_key)?;
-
-    let private_key =
-        crypto::decrypt_private_key(&enc_key, &encrypted_private_key)
-            .map_err(js_error)?;
-
-    Ok(encode_base64(&private_key))
-}
-
-/* -------------------------------------------------------------------------- */
-/* TOTP                                                                        */
+/* TOTP                                                                       */
 /* -------------------------------------------------------------------------- */
 
 #[wasm_bindgen]
@@ -362,7 +484,7 @@ pub fn get_totp_code(
 }
 
 /* -------------------------------------------------------------------------- */
-/* Import / export                                                             */
+/* Import / export                                                            */
 /* -------------------------------------------------------------------------- */
 
 #[wasm_bindgen]
@@ -378,8 +500,7 @@ pub fn export_json(
     let history: Vec<History> =
         serde_wasm_bindgen::from_value(history).map_err(js_error)?;
 
-    let data = core_export_json(&vault, &nodes, &edges, &history)
-        .map_err(js_error)?;
+    let data = core_export_json(&vault, &nodes, &edges, &history).map_err(js_error)?;
 
     Ok(encode_base64(&data))
 }

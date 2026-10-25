@@ -1,7 +1,8 @@
 use argon2::{Algorithm, Argon2, Params, Version};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use hkdf::Hkdf;
 use rand::{TryRng, rngs::SysRng};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
@@ -12,13 +13,13 @@ pub const PROTOCOL_VERSION: u8 = 1;
 
 pub const KEY_SIZE: usize = 32;
 pub const SALT_SIZE: usize = 32;
+pub const SIGNATURE_SIZE: usize = 64;
 
-// Default Argon2id parameters used during registration.
 const ARGON2_MEMORY_KIB: u32 = 128 * 1024;
 const ARGON2_ITERATIONS: u32 = 4;
 const ARGON2_LANES: u32 = 2;
 
-// Same bounds as those enforced by the server during registration.
+// Must match the bounds enforced by the server.
 const KDF_MEMORY_KIB_RANGE: std::ops::RangeInclusive<u32> = (64 * 1024)..=(512 * 1024);
 const KDF_ITERATIONS_RANGE: std::ops::RangeInclusive<u32> = 2..=10;
 const KDF_LANES_RANGE: std::ops::RangeInclusive<u32> = 1..=4;
@@ -28,7 +29,46 @@ const AUTH_KEY_INFO: &[u8] = b"LAIR-VAULT/auth/v1";
 const RECOVERY_ENC_KEY_INFO: &[u8] = b"LAIR-VAULT/recovery-enc/v1";
 const RECOVERY_AUTH_KEY_INFO: &[u8] = b"LAIR-VAULT/recovery-auth/v1";
 
-const X25519_WRAP_CONTEXT: &[u8] = b"x25519-vault-key-wrap";
+const X25519_WRAP_CONTEXT: &[u8] = b"LAIR-VAULT/x25519-vault-key-wrap/v1";
+const BINDING_CONTEXT: &[u8] = b"LAIR-VAULT/identity-binding/v1";
+const FINGERPRINT_CONTEXT: &[u8] = b"LAIR-VAULT/fingerprint/v1";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn fill_random(buf: &mut [u8], error: CryptoError) -> Result<(), CryptoError> {
+    SysRng.try_fill_bytes(buf).map_err(|_| error)
+}
+
+/// Length-prefixed encoding (u32 BE) to avoid ambiguous concatenation.
+pub fn encode(parts: &[&[u8]]) -> Result<Vec<u8>, CryptoError> {
+    let total: usize = parts.iter().map(|p| p.len() + 4).sum();
+    let mut out = Vec::with_capacity(total);
+
+    for part in parts {
+        let len = u32::try_from(part.len()).map_err(|_| CryptoError::InvalidKey)?;
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(part);
+    }
+
+    Ok(out)
+}
+
+pub fn verify_signature(
+    ed25519_public: &[u8; KEY_SIZE],
+    message: &[u8],
+    signature: &[u8; SIGNATURE_SIZE],
+) -> Result<(), CryptoError> {
+    let vk = VerifyingKey::from_bytes(ed25519_public).map_err(|_| CryptoError::InvalidKey)?;
+
+    vk.verify_strict(message, &Signature::from_bytes(signature))
+        .map_err(|_| CryptoError::InvalidSignature)
+}
+
+// ---------------------------------------------------------------------------
+// Password / recovery key derivation
+// ---------------------------------------------------------------------------
 
 /// Argon2id parameters received from /prelogin or selected at registration.
 #[derive(Clone, Copy, Debug)]
@@ -62,31 +102,18 @@ impl KdfParams {
     }
 }
 
-/// Paire de sous-clés indépendantes dérivées d'une clé racine.
-/// - `enc_key`  : chiffre la clé privée, ne quitte JAMAIS le client.
-/// - `auth_key` : envoyée au serveur (mot de passe ou clé de récupération
-///   n'étant jamais transmis).
+/// `enc_key` never leaves the client; `auth_key` is sent to the server.
 pub struct AccountKeys {
     pub enc_key: Zeroizing<[u8; KEY_SIZE]>,
     pub auth_key: Zeroizing<[u8; KEY_SIZE]>,
 }
 
-fn fill_random(buf: &mut [u8], error: CryptoError) -> Result<(), CryptoError> {
-    SysRng.try_fill_bytes(buf).map_err(|_| error)
-}
-
-/// Generates a random salt for registration or password changes.
 pub fn generate_salt() -> Result<[u8; SALT_SIZE], CryptoError> {
     let mut salt = [0u8; SALT_SIZE];
-
     fill_random(&mut salt, CryptoError::KeyGenerationFailed)?;
-
     Ok(salt)
 }
 
-/// Derives a 32-byte key from the user's password with Argon2id.
-/// Private: this key must not leave this module. It is used only as the root
-/// key for `derive_account_keys`.
 fn derive_master_key(
     master_password: &[u8],
     salt: &[u8],
@@ -112,7 +139,6 @@ fn derive_master_key(
     Ok(master_key)
 }
 
-/// Splits a root key (a 32-byte PRK) into two independent subkeys.
 fn derive_key_pair(
     prk: &[u8; KEY_SIZE],
     enc_info: &[u8],
@@ -125,98 +151,265 @@ fn derive_key_pair(
 
     hkdf.expand(enc_info, &mut *enc_key)
         .map_err(|_| CryptoError::KeyDerivationFailed)?;
-
     hkdf.expand(auth_info, &mut *auth_key)
         .map_err(|_| CryptoError::KeyDerivationFailed)?;
 
     Ok(AccountKeys { enc_key, auth_key })
 }
 
-/// Password + salt -> (enc_key, auth_key).
-/// The two keys are independent: knowing `auth_key` on the server does not
-/// reveal `enc_key` or `master_key`.
 pub fn derive_account_keys(
     master_password: &[u8],
     salt: &[u8],
     kdf: KdfParams,
 ) -> Result<AccountKeys, CryptoError> {
     let master_key = derive_master_key(master_password, salt, kdf)?;
-
     derive_key_pair(&master_key, ENC_KEY_INFO, AUTH_KEY_INFO)
 }
 
-/// Generates a 256-bit recovery key to display to the user once at registration.
 pub fn generate_recovery_key() -> Result<Zeroizing<[u8; KEY_SIZE]>, CryptoError> {
     let mut key = Zeroizing::new([0u8; KEY_SIZE]);
-
     fill_random(&mut *key, CryptoError::KeyGenerationFailed)?;
-
     Ok(key)
 }
 
-/// recovery_key -> (recovery enc_key, recovery auth_key).
-/// Argon2 is not needed because the recovery key is already random (256 bits).
+/// No Argon2 needed: the recovery key is already 256 random bits.
 pub fn derive_recovery_keys(recovery_key: &[u8; KEY_SIZE]) -> Result<AccountKeys, CryptoError> {
     derive_key_pair(recovery_key, RECOVERY_ENC_KEY_INFO, RECOVERY_AUTH_KEY_INFO)
 }
 
-/// Generates a cryptographically random Vault key.
-/// The Vault key is the symmetric key used to encrypt Vault data.
-pub fn generate_vault_key() -> Result<[u8; KEY_SIZE], CryptoError> {
-    let mut key = [0u8; KEY_SIZE];
-
-    fill_random(&mut key, CryptoError::KeyGenerationFailed)?;
-
+pub fn generate_vault_key() -> Result<Zeroizing<[u8; KEY_SIZE]>, CryptoError> {
+    let mut key = Zeroizing::new([0u8; KEY_SIZE]);
+    fill_random(&mut *key, CryptoError::KeyGenerationFailed)?;
     Ok(key)
 }
 
-/// Generates an X25519 key pair.
-/// The private key must remain client-side.
-/// Only the public key should be sent to the backend.
-pub fn generate_asymmetric_keypair() -> Result<([u8; KEY_SIZE], [u8; KEY_SIZE]), CryptoError> {
-    let mut private_bytes = Zeroizing::new([0u8; KEY_SIZE]);
+// ---------------------------------------------------------------------------
+// Identity keys: X25519 (key agreement) + Ed25519 (signing)
+// ---------------------------------------------------------------------------
 
-    fill_random(&mut *private_bytes, CryptoError::KeyGenerationFailed)?;
-
-    let private_key = StaticSecret::from(*private_bytes);
-    let public_key = PublicKey::from(&private_key);
-
-    Ok((private_key.to_bytes(), public_key.to_bytes()))
+pub struct IdentityKeys {
+    x25519_private: Zeroizing<[u8; KEY_SIZE]>,
+    ed25519_seed: Zeroizing<[u8; KEY_SIZE]>,
+    pub x25519_public: [u8; KEY_SIZE],
+    pub ed25519_public: [u8; KEY_SIZE],
 }
 
-/// Derives an AEAD key from an X25519 shared secret.
-/// The raw X25519 shared secret must never be used directly as an
-/// application encryption key. HKDF provides key separation and
-/// protocol-level domain separation.
-pub fn derive_x25519_aead_key(
-    shared_secret: &[u8; KEY_SIZE],
-    vault_id: &[u8],
+impl IdentityKeys {
+    pub fn generate() -> Result<Self, CryptoError> {
+        let mut x25519_private = Zeroizing::new([0u8; KEY_SIZE]);
+        let mut ed25519_seed = Zeroizing::new([0u8; KEY_SIZE]);
+
+        fill_random(&mut *x25519_private, CryptoError::KeyGenerationFailed)?;
+        fill_random(&mut *ed25519_seed, CryptoError::KeyGenerationFailed)?;
+
+        Ok(Self::from_secrets(x25519_private, ed25519_seed))
+    }
+
+    /// Rebuilds an identity from decrypted secrets; public keys are recomputed.
+    pub fn from_secrets(
+        x25519_private: Zeroizing<[u8; KEY_SIZE]>,
+        ed25519_seed: Zeroizing<[u8; KEY_SIZE]>,
+    ) -> Self {
+        let x25519_public = PublicKey::from(&StaticSecret::from(*x25519_private)).to_bytes();
+        let ed25519_public = SigningKey::from_bytes(&ed25519_seed)
+            .verifying_key()
+            .to_bytes();
+
+        Self {
+            x25519_private,
+            ed25519_seed,
+            x25519_public,
+            ed25519_public,
+        }
+    }
+
+    pub fn x25519_private(&self) -> &[u8; KEY_SIZE] {
+        &self.x25519_private
+    }
+
+    pub fn ed25519_seed(&self) -> &[u8; KEY_SIZE] {
+        &self.ed25519_seed
+    }
+
+    pub fn sign(&self, message: &[u8]) -> [u8; SIGNATURE_SIZE] {
+        SigningKey::from_bytes(&self.ed25519_seed)
+            .sign(message)
+            .to_bytes()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Signed binding: user_id <-> public keys
+// ---------------------------------------------------------------------------
+
+/// What the server stores and distributes for a user.
+#[derive(Clone, Debug)]
+pub struct PublicIdentity {
+    pub user_id: Vec<u8>,
+    pub x25519_public: [u8; KEY_SIZE],
+    pub ed25519_public: [u8; KEY_SIZE],
+    pub signature: [u8; SIGNATURE_SIZE],
+}
+
+fn binding_message(
     user_id: &[u8],
-) -> Result<[u8; KEY_SIZE], CryptoError> {
-    if shared_secret.iter().all(|&byte| byte == 0) {
+    x25519_public: &[u8; KEY_SIZE],
+    ed25519_public: &[u8; KEY_SIZE],
+) -> Result<Vec<u8>, CryptoError> {
+    encode(&[
+        BINDING_CONTEXT,
+        &[PROTOCOL_VERSION],
+        user_id,
+        x25519_public,
+        ed25519_public,
+    ])
+}
+
+impl PublicIdentity {
+    /// `user_id` must be the raw 16 bytes of the UUID, not its text form.
+    pub fn sign(identity: &IdentityKeys, user_id: &[u8]) -> Result<Self, CryptoError> {
+        let msg = binding_message(user_id, &identity.x25519_public, &identity.ed25519_public)?;
+
+        Ok(Self {
+            user_id: user_id.to_vec(),
+            x25519_public: identity.x25519_public,
+            ed25519_public: identity.ed25519_public,
+            signature: identity.sign(&msg),
+        })
+    }
+
+    fn verify_binding(&self) -> Result<(), CryptoError> {
+        let msg = binding_message(&self.user_id, &self.x25519_public, &self.ed25519_public)?;
+        verify_signature(&self.ed25519_public, &msg, &self.signature)
+    }
+
+    /// Fingerprint to compare out of band.
+    pub fn fingerprint(&self) -> Result<String, CryptoError> {
+        let data = encode(&[FINGERPRINT_CONTEXT, &self.user_id, &self.ed25519_public])?;
+        let hex: String = Sha256::digest(&data)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+
+        Ok(hex
+            .as_bytes()
+            .chunks(8)
+            .map(|c| std::str::from_utf8(c).unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join(" "))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TrustStatus {
+    /// Ed25519 key matches the locally pinned one.
+    Pinned,
+    /// First contact: the caller should pin the key.
+    FirstUse,
+}
+
+/// Only obtainable through `verify_peer_identity`.
+#[derive(Clone, Debug)]
+pub struct VerifiedIdentity {
+    user_id: Vec<u8>,
+    x25519_public: [u8; KEY_SIZE],
+    ed25519_public: [u8; KEY_SIZE],
+}
+
+impl VerifiedIdentity {
+    pub fn user_id(&self) -> &[u8] {
+        &self.user_id
+    }
+    pub fn x25519_public(&self) -> &[u8; KEY_SIZE] {
+        &self.x25519_public
+    }
+    pub fn ed25519_public(&self) -> &[u8; KEY_SIZE] {
+        &self.ed25519_public
+    }
+}
+
+/// Must be called on every public identity received from the server.
+pub fn verify_peer_identity(
+    received: &PublicIdentity,
+    expected_user_id: &[u8],
+    pinned_ed25519: Option<&[u8; KEY_SIZE]>,
+) -> Result<(VerifiedIdentity, TrustStatus), CryptoError> {
+    if received.user_id != expected_user_id {
+        return Err(CryptoError::IdentityMismatch);
+    }
+
+    received.verify_binding()?;
+
+    let status = match pinned_ed25519 {
+        Some(pinned) if pinned != &received.ed25519_public => {
+            return Err(CryptoError::IdentityKeyChanged);
+        }
+        Some(_) => TrustStatus::Pinned,
+        None => TrustStatus::FirstUse,
+    };
+
+    Ok((
+        VerifiedIdentity {
+            user_id: received.user_id.clone(),
+            x25519_public: received.x25519_public,
+            ed25519_public: received.ed25519_public,
+        },
+        status,
+    ))
+}
+
+// ---------------------------------------------------------------------------
+// X25519 key agreement
+// ---------------------------------------------------------------------------
+
+pub fn generate_ephemeral_keypair()
+-> Result<(Zeroizing<[u8; KEY_SIZE]>, [u8; KEY_SIZE]), CryptoError> {
+    let mut private = Zeroizing::new([0u8; KEY_SIZE]);
+    fill_random(&mut *private, CryptoError::KeyGenerationFailed)?;
+
+    let public = PublicKey::from(&StaticSecret::from(*private)).to_bytes();
+
+    Ok((private, public))
+}
+
+/// Rejects low-order points.
+pub fn x25519_shared_secret(
+    private_key: &[u8; KEY_SIZE],
+    peer_public: &[u8; KEY_SIZE],
+) -> Result<Zeroizing<[u8; KEY_SIZE]>, CryptoError> {
+    let secret = StaticSecret::from(*private_key);
+    let shared = secret.diffie_hellman(&PublicKey::from(*peer_public));
+
+    if !shared.was_contributory() {
         return Err(CryptoError::KeyDerivationFailed);
     }
 
+    Ok(Zeroizing::new(shared.to_bytes()))
+}
+
+/// AEAD key bound to the protocol, Vault, sender, recipient and both public keys.
+pub fn derive_x25519_aead_key(
+    shared_secret: &[u8; KEY_SIZE],
+    ephemeral_public: &[u8; KEY_SIZE],
+    recipient_public: &[u8; KEY_SIZE],
+    vault_id: &[u8],
+    sender_id: &[u8],
+    recipient_id: &[u8],
+) -> Result<Zeroizing<[u8; KEY_SIZE]>, CryptoError> {
     let hkdf = Hkdf::<Sha256>::new(Some(PROTOCOL_NAME), shared_secret);
 
-    let mut key = [0u8; KEY_SIZE];
+    let info = encode(&[
+        X25519_WRAP_CONTEXT,
+        &[PROTOCOL_VERSION, 0x01],
+        ephemeral_public,
+        recipient_public,
+        vault_id,
+        sender_id,
+        recipient_id,
+    ])?;
 
-    let mut info =
-        Vec::with_capacity(X25519_WRAP_CONTEXT.len() + 1 + 1 + vault_id.len() + user_id.len());
-
-    info.extend_from_slice(X25519_WRAP_CONTEXT);
-
-    // Protocol version.
-    info.push(PROTOCOL_VERSION);
-
-    // Cryptographic purpose identifier.
-    info.push(0x01);
-
-    // Bind the derived key to the Vault and recipient.
-    info.extend_from_slice(vault_id);
-    info.extend_from_slice(user_id);
-
-    hkdf.expand(&info, &mut key)
+    let mut key = Zeroizing::new([0u8; KEY_SIZE]);
+    hkdf.expand(&info, &mut *key)
         .map_err(|_| CryptoError::KeyDerivationFailed)?;
 
     Ok(key)
