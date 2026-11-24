@@ -7,6 +7,7 @@ use helper::{
     encode_uuid, js_error,
 };
 
+use project_core::business::xposedornot_service;
 use project_core::import_export::json::{
     export_json as core_export_json,
     import_json as core_import_json,
@@ -88,7 +89,7 @@ fn public_identity_to_js(identity: &key::PublicIdentity) -> Result<JsValue, JsVa
 }
 
 /* -------------------------------------------------------------------------- */
-/* Password breach check                                                     */
+/* identifier & Password breach check                                         */
 /* -------------------------------------------------------------------------- */
 
 #[wasm_bindgen]
@@ -102,8 +103,19 @@ pub async fn check_passwords_wasm(
     serde_wasm_bindgen::to_value(&results).map_err(js_error)
 }
 
+#[wasm_bindgen]
+pub async fn check_identifiers_wasm(
+    identifiers: Vec<String>
+) -> Result<JsValue, JsValue> {
+    let result = xposedornot_service::check_identifiers(identifiers)
+        .await
+        .map_err(js_error)?;
+
+    serde_wasm_bindgen::to_value(&result).map_err(js_error)
+}
+
 /* -------------------------------------------------------------------------- */
-/* Graph algorithms                                                          */
+/* Graph algorithms                                                           */
 /* -------------------------------------------------------------------------- */
 
 #[wasm_bindgen]
